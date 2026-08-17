@@ -90,7 +90,7 @@
       </button>
       <div class="panel">
         <div class="grip"></div>
-        <iframe title="Stara SF Toolbox" allow=""></iframe>
+        <iframe title="Stara SF Toolbox" allow="clipboard-write"></iframe>
       </div>
     </div>
   `;

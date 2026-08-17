@@ -1,0 +1,49 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <title>Anonymous Apex — Stara SF Toolbox</title>
+  <link rel="stylesheet" href="page.css">
+</head>
+<body class="apex-body">
+  <header class="apex-hd">
+    <div class="grow">
+      <div class="title">Anonymous Apex</div>
+      <div class="host" id="host">connecting…</div>
+    </div>
+
+    <label title="Sets a TraceFlag for you so the run produces a debug log">
+      <input type="checkbox" id="capture" checked> Capture debug log
+    </label>
+
+    <select id="level" title="Debug level applied to the TraceFlag">
+      <option value="debug">Debug</option>
+      <option value="finest">Finest</option>
+      <option value="error">Errors only</option>
+    </select>
+
+    <select id="history" title="Recent snippets">
+      <option value="">History…</option>
+    </select>
+
+    <button class="btn primary" id="run" disabled>Run (Ctrl+Enter)</button>
+  </header>
+
+  <div class="apex-editor">
+    <textarea id="code" spellcheck="false" placeholder="System.debug('hello');"></textarea>
+  </div>
+
+  <div class="apex-result" id="result" hidden></div>
+
+  <div class="apex-logbar">
+    <span class="grow" id="logMeta">No log yet.</span>
+    <label><input type="checkbox" id="debugOnly"> USER_DEBUG only</label>
+    <button class="btn small" id="copyLog">Copy log</button>
+    <button class="btn small" id="downloadLog">Download</button>
+  </div>
+
+  <div class="apex-log" id="log"><span class="empty">Run something to see its debug log here.</span></div>
+
+  <script src="apex.js" type="module"></script>
+</body>
+</html>

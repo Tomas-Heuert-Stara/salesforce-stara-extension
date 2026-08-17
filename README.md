@@ -1,7 +1,8 @@
 # Stara SF Toolbox
 
 A Chrome/Edge (Manifest V3) extension that adds a slide-out side panel to any Salesforce
-org you are logged into — deployment status, Apex job KPIs and Setup shortcuts.
+org you are logged into — deployment status, Apex job KPIs, org limits, debug log
+control and Setup shortcuts — plus an Anonymous Apex runner with a debug log viewer.
 
 No build step, no dependencies. Load the folder as-is.
 
@@ -27,57 +28,96 @@ which re-reads the folder from disk, so you never have to visit
 `chrome://extensions`. It does tear down the panel, so refresh the Salesforce tab
 afterwards. Dismissing silences that specific version.
 
-**Setup, once:** fill in `src/config.js` with the repo coordinates.
+The check is an unauthenticated GET against `raw.githubusercontent.com`, which is why
+the repo is public. Nothing is sent anywhere; it is a plain file read. Repo
+coordinates live in [src/config.js](src/config.js); blank them to disable the check.
 
-```js
-export const REPO = {
-  owner: "your-github-user-or-org",
-  repo: "salesforce-stara-extension",
-  branch: "main",
-};
-```
+**When you publish a change, bump `version` in `manifest.json`** — that field is the
+only thing the check compares. See [CLAUDE.md](CLAUDE.md) for the full rule.
 
-Leave `owner` or `repo` empty and the check is disabled — no banner, no requests.
-The check only ever does an unauthenticated GET against
-`raw.githubusercontent.com`, so **the repo has to be public**. Nothing is sent
-anywhere; it is a plain file read.
+## What's in the panel
 
-**When you publish a change, bump `version` in `manifest.json`.** That field is the
-only thing the check compares — pushing commits without bumping it means nobody
-gets told.
+### Deployment status
 
-## What it shows
+The currently running deploy (or the most recent one if nothing is running), with live
+component and test progress bars, duration, who started it, and validation-vs-deploy.
+Failed deploys expand into the actual component errors and test failures. Four earlier
+deployments collapse below. Each card carries **Open in Setup**, **Copy Id** and
+**Copy sf command** (`sf project deploy report --job-id …`).
 
-**Deployment status** — the currently running deploy (or the most recent one if
-nothing is running), with live component and test progress bars, duration, who
-started it, and validation-vs-deploy. Failed deploys expand into the actual
-component errors and test failures. Four earlier deployments are listed below it.
+### Apex jobs
 
-**Apex jobs** — three counters, each clickable straight to the matching Setup page:
+Three counters, each clicking through to the matching Setup page:
 
 | Tile | Query |
 | --- | --- |
-| Scheduled | `CronTrigger` where `CronJobDetail.JobType = '7'` (Scheduled Apex), excluding deleted/complete |
+| Scheduled | `CronTrigger` where `CronJobDetail.JobType = '7'`, excluding deleted/complete |
 | Running | `AsyncApexJob` with status `Processing` or `Preparing` |
 | Flex queue | `AsyncApexJob` with status `Holding` |
 
-`BatchApexWorker` rows are excluded everywhere. They are the individual chunks of a
+`BatchApexWorker` rows are excluded everywhere — they are the individual chunks of a
 running batch, so counting them would report one batch job as hundreds.
 
-**Running job detail** — whenever the Running count is above zero, each job is listed
-underneath with its Apex class and method, job type, who started it, elapsed time,
-a batches-processed bar, error count, `ExtendedStatus`, and an estimated finish time.
+Below the tiles:
 
-The estimate deserves a note. `AsyncApexJob` has no "started processing" timestamp —
+- **Running jobs**, listed with Apex class and method, job type, who started it, elapsed
+  time, a batches-processed bar, error count, `ExtendedStatus`, and an estimated finish.
+- **Failed in the last 24h**, collapsed.
+- **Scheduled jobs**, collapsed by default (production carries dozens), with next and
+  previous fire time, cron expression and run count. The summary badges how many are in
+  `ERROR`, `PAUSED` or `BLOCKED` — a scheduled job that quietly died is exactly what
+  this is for.
+
+**About the finish estimate.** `AsyncApexJob` has no "started processing" timestamp —
 `CreatedDate` is when the job was *queued*, so a naive `items / elapsed` rate is badly
-pessimistic for anything that sat in the flex queue first. So the panel keeps a
-throughput sample per job id across refreshes: once it has watched a job for at least
-10s and seen the counter move, it uses the measured rate. Until then it falls back to
-the queue-time average and labels the result "(rough)". Hovering the estimate says
-which basis was used.
+pessimistic for anything that sat in the flex queue first. The panel keeps a throughput
+sample per job id across refreshes: once it has watched a job for at least 10s and seen
+the counter move, it uses the measured rate. Until then it falls back to the queue-time
+average and labels it "(rough)". Hover the estimate to see which basis was used.
 
-**Shortcuts** — Object Manager, Developer Console (opens in its own window),
-Deployment Status. Ctrl/Cmd/Shift-click any Setup link to open it in a new tab.
+### Org limits
+
+Daily API requests, daily async Apex executions, data and file storage, single and mass
+email, hourly time-based workflow — each with a consumption bar that turns amber at 75%
+and red at 90%. Org-wide Apex coverage sits underneath, red below the 75% deploy gate.
+
+### Debug logs
+
+Row count and total size, with a **Delete all** button behind a two-click confirm.
+Clogged `ApexLog` storage silently stops new logs being written, which is the whole
+reason this exists. Deletion is paged 200 at a time with live progress.
+
+### Shortcuts
+
+Fully configurable — see below. Ships with Object Manager, Developer Console, Anonymous
+Apex and Deployment Status. Above them is a record-Id box: paste any 15- or 18-character
+Id, and the key prefix is resolved against the org's global describe to open the record.
+
+Ctrl/Cmd/Shift-click any Setup link to open it in a new tab.
+
+## Options
+
+Toolbar icon → **Options**, or the pencil in the panel's Shortcuts header.
+
+Shortcuts are a list of label + Setup path, stored in `chrome.storage.sync` so they
+follow you across machines. Add from a catalog of common Setup pages, or paste any path
+you can reach in Setup. Two entries are built-in actions rather than paths: Developer
+Console and Anonymous Apex. Changes save automatically.
+
+## Anonymous Apex runner
+
+Opens in its own tab. Write Apex, **Ctrl+Enter** to run.
+
+The Tooling API's `executeAnonymous` does not return a debug log, so to show one the
+runner does what the Developer Console does: ensures a `DebugLevel` named
+`StaraToolbox` and a `TraceFlag` on your user exist (30 minutes, three presets — Debug,
+Finest, Errors only), runs the code, then finds the `ApexLog` the run produced and
+fetches its body.
+
+Compile errors report line and column; unhandled exceptions report message and stack
+trace. The log pane has a **USER_DEBUG only** filter, copy and download, and the last 20
+snippets are kept in a history dropdown. Untick **Capture debug log** to skip the
+TraceFlag work and just execute.
 
 ## How it talks to Salesforce
 
@@ -93,13 +133,15 @@ Notes:
 
 - The API version is discovered at runtime from `/services/data/`, so the
   extension does not go stale when the org is upgraded.
-- Deployments and Apex jobs poll on **independent timers**: deployments at 4s while
-  one is running and 30s otherwise, jobs always at 30s. Both pause completely when
-  the panel is closed or the tab is in the background.
-- The three counters plus the running-job detail go out as a single `composite/batch`
-  call, so a jobs refresh costs one API call regardless of how much it shows.
-- Each section header has its own ⟳ button to refresh just that section; the one in
-  the top bar refreshes both. The footer shows the last update time for each.
+- Three independent refresh cycles: **deployments** at 4s while one is running and 30s
+  otherwise, **jobs** always at 30s, **org info** (limits, coverage, identity) only at
+  boot and on demand. Deployments and jobs pause completely when the panel is closed or
+  the tab is backgrounded.
+- The whole jobs cycle — three counters, running detail, scheduled detail, failed jobs,
+  log count, log size, limits — is a single `composite/batch` call. Nine reads, one API
+  call.
+- Each section header has its own ⟳ to refresh just that section; the one in the top bar
+  refreshes everything. The footer shows the last update time per cycle.
 - Requires the **API Enabled** permission on your user (any admin/developer
   profile has it).
 
@@ -112,16 +154,17 @@ Notes:
 ## Known rough edges
 
 - The deployment list comes from the Tooling API `DeployRequest` object. Field
-  availability there varies a bit between orgs and API versions, so the panel
-  probes three progressively simpler queries and sticks with the first one that
-  works. If all three fail you get the raw Salesforce error in the panel —
-  paste it back and the query can be adjusted.
-- Failure detail comes from `/services/data/vXX.X/metadata/deployRequest/{id}?includeDetails=true`.
-  If your org rejects that endpoint the card still renders, just without the
-  expandable error list.
-- The running-job list asks for `ApexClass.Name` and `CreatedBy.Name`. If field-level
-  security on those blocks the relationship query, it drops to a flat projection and
-  the class name shows as unavailable.
+  availability there varies between orgs and API versions, so the panel probes three
+  progressively simpler queries and sticks with the first that works. Same idea for the
+  `AsyncApexJob` relationship fields (`ApexClass.Name`, `CreatedBy.Name`), which
+  field-level security can block — it drops to a flat projection and the class name
+  shows as unavailable.
+- Failure detail comes from
+  `/services/data/vXX.X/metadata/deployRequest/{id}?includeDetails=true`. If your org
+  rejects that endpoint the card still renders, just without the expandable error list.
+- [TODO.md](TODO.md) lists the calls that have not been exercised against a live org
+  yet. They all degrade to a visible error rather than breaking the panel — if you see
+  one, the message is the raw Salesforce error and worth pasting back.
 - Only tested against the domain patterns in `manifest.json`. If you use a
   custom `my.site.com` or an unusual sandbox domain, add it to both
   `host_permissions` and `content_scripts.matches`.
@@ -131,8 +174,12 @@ Notes:
 ```
 manifest.json
 src/config.js       repo coordinates for the update check
-src/background.js   session/cookie resolution, update check, toolbar + shortcut
+src/shortcuts.js    shortcut defaults, catalog and storage helpers
+src/background.js   session/cookie resolution, update check, tab + shortcut handling
 src/content.js      shadow-DOM launcher tab, slide-out panel host, resize
-src/panel.html/.css/.js   the panel UI and all Salesforce API calls
+src/panel.*         the side panel UI and its Salesforce API calls
+src/options.*       shortcut editor
+src/apex.*          Anonymous Apex runner and log viewer
+src/page.css        shared styling for the full-tab pages
 icons/
 ```

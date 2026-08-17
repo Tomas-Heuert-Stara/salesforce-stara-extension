@@ -1,0 +1,231 @@
+/* Shared chrome for the full-tab extension pages (options, Anonymous Apex). */
+
+:root {
+  --bg: #ffffff;
+  --bg-alt: #f4f6f9;
+  --bg-sunk: #eef1f6;
+  --line: #dde2ea;
+  --text: #16202f;
+  --muted: #5a6b82;
+  --brand: #0b5cab;
+  --brand-soft: #e8f1fb;
+  --ok: #2e7d4f;
+  --ok-soft: #e4f4ea;
+  --warn: #9a6400;
+  --warn-soft: #fdf2dc;
+  --err: #b3261e;
+  --err-soft: #fdeceb;
+  --mono: ui-monospace, "Cascadia Mono", Consolas, "Courier New", monospace;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root {
+    --bg: #16181d;
+    --bg-alt: #1e2128;
+    --bg-sunk: #23272f;
+    --line: #333944;
+    --text: #e6e9ef;
+    --muted: #97a3b6;
+    --brand: #4f9dea;
+    --brand-soft: #16304b;
+    --ok: #6cc48c;
+    --ok-soft: #17301f;
+    --warn: #e0ac4a;
+    --warn-soft: #33270f;
+    --err: #f2837b;
+    --err-soft: #3a1a18;
+  }
+}
+
+* { box-sizing: border-box; margin: 0; padding: 0; }
+html, body { height: 100%; }
+
+body {
+  background: var(--bg);
+  color: var(--text);
+  font: 14px/1.5 -apple-system, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+}
+
+.page { max-width: 780px; margin: 0 auto; padding: 28px 22px 60px; }
+
+h1 { font-size: 19px; font-weight: 650; }
+h2 {
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: .07em;
+  text-transform: uppercase;
+  color: var(--muted);
+  margin-bottom: 10px;
+}
+.sub { color: var(--muted); font-size: 13px; margin-top: 4px; }
+
+.page-hd { margin-bottom: 26px; display: flex; align-items: flex-start; gap: 14px; }
+.page-hd .grow { flex: 1; }
+
+.block { margin-top: 26px; }
+
+/* buttons ------------------------------------------------------------- */
+.btn {
+  border: 1px solid var(--line);
+  border-radius: 7px;
+  background: var(--bg-alt);
+  color: var(--text);
+  font: inherit;
+  font-size: 13px;
+  font-weight: 550;
+  padding: 6px 13px;
+  cursor: pointer;
+}
+.btn:hover { border-color: var(--brand); color: var(--brand); }
+.btn.primary { background: var(--brand); border-color: var(--brand); color: #fff; }
+.btn.primary:hover { opacity: .9; color: #fff; }
+.btn.primary:disabled { opacity: .5; cursor: default; }
+.btn.small { font-size: 12px; padding: 4px 9px; }
+.btn.icon { padding: 4px 8px; min-width: 30px; }
+.btn.danger { color: var(--err); border-color: var(--err); background: transparent; }
+
+input[type="text"], select, textarea {
+  border: 1px solid var(--line);
+  border-radius: 7px;
+  background: var(--bg);
+  color: var(--text);
+  font: inherit;
+  font-size: 13px;
+  padding: 6px 9px;
+}
+input[type="text"]:focus, select:focus, textarea:focus {
+  outline: none;
+  border-color: var(--brand);
+}
+
+.saved {
+  font-size: 12px;
+  color: var(--ok);
+  opacity: 0;
+  transition: opacity .2s ease;
+}
+.saved.on { opacity: 1; }
+
+.hint { font-size: 12px; color: var(--muted); margin-top: 9px; }
+.hint code {
+  font-family: var(--mono);
+  background: var(--bg-sunk);
+  border-radius: 3px;
+  padding: 1px 4px;
+}
+
+/* ---- options: shortcut rows ------------------------------------------ */
+.rows { display: flex; flex-direction: column; gap: 6px; }
+.row {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 7px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--bg-alt);
+}
+.row .label-in { width: 190px; flex: none; }
+.row .path-in { flex: 1; font-family: var(--mono); font-size: 12px; }
+.row .builtin {
+  flex: 1;
+  font-size: 12px;
+  color: var(--muted);
+  font-style: italic;
+  padding-left: 4px;
+}
+.row-actions { display: flex; gap: 4px; flex: none; }
+
+.add-row { display: flex; gap: 7px; margin-top: 12px; flex-wrap: wrap; }
+.add-row select { flex: 1; min-width: 200px; }
+
+/* ---- apex runner ----------------------------------------------------- */
+.apex-body {
+  display: flex;
+  flex-direction: column;
+  height: 100vh;
+  max-width: none;
+  margin: 0;
+  padding: 0;
+}
+.apex-hd {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 10px 16px;
+  border-bottom: 1px solid var(--line);
+  background: var(--bg-alt);
+  flex: none;
+  flex-wrap: wrap;
+}
+.apex-hd .grow { flex: 1; min-width: 120px; }
+.apex-hd .title { font-weight: 650; font-size: 14px; }
+.apex-hd .host { font-size: 12px; color: var(--muted); }
+.apex-hd label { font-size: 12.5px; display: flex; align-items: center; gap: 5px; }
+
+.apex-editor {
+  flex: none;
+  height: 38vh;
+  min-height: 130px;
+  display: flex;
+}
+.apex-editor textarea {
+  flex: 1;
+  border: 0;
+  border-radius: 0;
+  resize: vertical;
+  font-family: var(--mono);
+  font-size: 13px;
+  line-height: 1.55;
+  padding: 12px 16px;
+  tab-size: 2;
+}
+
+.apex-result {
+  flex: none;
+  padding: 9px 16px;
+  border-top: 1px solid var(--line);
+  border-bottom: 1px solid var(--line);
+  font-size: 13px;
+  display: flex;
+  align-items: flex-start;
+  gap: 9px;
+}
+.apex-result.ok { background: var(--ok-soft); color: var(--ok); }
+.apex-result.err { background: var(--err-soft); color: var(--err); }
+.apex-result.busy { background: var(--brand-soft); color: var(--brand); }
+.apex-result pre {
+  font-family: var(--mono);
+  font-size: 12px;
+  white-space: pre-wrap;
+  word-break: break-word;
+  margin-top: 4px;
+}
+
+.apex-logbar {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 7px 16px;
+  border-bottom: 1px solid var(--line);
+  background: var(--bg-alt);
+  font-size: 12.5px;
+  flex: none;
+  flex-wrap: wrap;
+}
+.apex-logbar .grow { flex: 1; }
+.apex-logbar label { display: flex; align-items: center; gap: 5px; }
+
+.apex-log {
+  flex: 1;
+  overflow: auto;
+  padding: 12px 16px;
+  font-family: var(--mono);
+  font-size: 12px;
+  line-height: 1.5;
+  white-space: pre;
+  color: var(--text);
+}
+.apex-log .empty { font-family: inherit; color: var(--muted); white-space: normal; }
+.apex-log .dbg { color: var(--brand); }
+.apex-log .fatal { color: var(--err); font-weight: 600; }

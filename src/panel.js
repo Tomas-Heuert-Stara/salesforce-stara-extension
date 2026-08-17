@@ -3,9 +3,13 @@
  * so it can call the org's REST/Tooling API directly using the session id the
  * service worker digs out of the cookie jar.
  *
- * Deployments and Apex jobs poll on independent timers: a running deploy is worth
- * watching second-by-second, job counters are not.
+ * Three independent refresh cycles:
+ *   deploys - 4s while one is running, 30s otherwise
+ *   jobs    - 30s, everything in one composite/batch call
+ *   org     - once at boot and on demand (limits, coverage, org identity)
  */
+
+import { loadShortcuts, SHORTCUTS_KEY } from "./shortcuts.js";
 
 const POLL_DEPLOY_ACTIVE_MS = 4000;
 const POLL_DEPLOY_IDLE_MS = 30000;
@@ -14,18 +18,30 @@ const POLL_JOBS_MS = 30000;
 const pageHost = new URLSearchParams(location.search).get("host") || location.hostname;
 
 const el = {
+  orgName: document.getElementById("orgName"),
   orgHost: document.getElementById("orgHost"),
   envBadge: document.getElementById("envBadge"),
   banner: document.getElementById("banner"),
   updateBanner: document.getElementById("updateBanner"),
+  optionsBtn: document.getElementById("optionsBtn"),
   refreshAll: document.getElementById("refreshAll"),
   refreshDeploy: document.getElementById("refreshDeploy"),
   refreshJobs: document.getElementById("refreshJobs"),
+  refreshOrg: document.getElementById("refreshOrg"),
+  editShortcuts: document.getElementById("editShortcuts"),
   close: document.getElementById("closeBtn"),
   deploy: document.getElementById("deploy"),
   kpis: document.getElementById("kpis"),
   kpiErr: document.getElementById("kpiErr"),
   runningJobs: document.getElementById("runningJobs"),
+  failedJobs: document.getElementById("failedJobs"),
+  scheduledJobs: document.getElementById("scheduledJobs"),
+  limits: document.getElementById("limits"),
+  coverage: document.getElementById("coverage"),
+  logs: document.getElementById("logs"),
+  jumpInput: document.getElementById("jumpInput"),
+  jumpHint: document.getElementById("jumpHint"),
+  shortcuts: document.getElementById("shortcuts"),
   updated: document.getElementById("updated"),
   pollNote: document.getElementById("pollNote"),
 };
@@ -132,6 +148,7 @@ function salesforceError(body) {
 }
 
 const soqlPath = q => `query?q=${encodeURIComponent(q)}`;
+const isAuthError = err => err?.status === 401 || err?.status === 403;
 
 // ---------------------------------------------------------------------------
 // queries
@@ -144,24 +161,38 @@ const NOT_WORKER = "JobType != 'BatchApexWorker'";
 const RUNNING_WHERE = `Status IN ('Processing', 'Preparing') AND ${NOT_WORKER}`;
 
 // CronJobDetail.JobType '7' is Scheduled Apex.
-const Q_SCHEDULED =
-  "SELECT COUNT() FROM CronTrigger WHERE CronJobDetail.JobType = '7' " +
-  "AND State NOT IN ('DELETED', 'COMPLETE')";
+const SCHEDULED_WHERE =
+  "CronJobDetail.JobType = '7' AND State NOT IN ('DELETED', 'COMPLETE')";
+
+const Q_SCHEDULED = `SELECT COUNT() FROM CronTrigger WHERE ${SCHEDULED_WHERE}`;
 const Q_RUNNING = `SELECT COUNT() FROM AsyncApexJob WHERE ${RUNNING_WHERE}`;
 // Batch jobs parked in the Apex flex queue sit in Holding.
-const Q_FLEX = `SELECT COUNT() FROM AsyncApexJob WHERE Status = 'Holding'`;
+const Q_FLEX = "SELECT COUNT() FROM AsyncApexJob WHERE Status = 'Holding'";
+const Q_SCHEDULED_DETAIL =
+  "SELECT Id, CronJobDetail.Name, CronExpression, State, NextFireTime, " +
+  "PreviousFireTime, TimesTriggered " +
+  `FROM CronTrigger WHERE ${SCHEDULED_WHERE} ORDER BY NextFireTime ASC NULLS LAST LIMIT 60`;
+const Q_LOG_COUNT = "SELECT COUNT() FROM ApexLog";
+const Q_LOG_SIZE = "SELECT SUM(LogLength) total FROM ApexLog";
+const Q_ORG =
+  "SELECT Id, Name, InstanceName, OrganizationType, IsSandbox FROM Organization LIMIT 1";
+const Q_COVERAGE = "SELECT PercentCovered FROM ApexOrgWideCoverage";
 
-// Relationship fields can be blocked by field-level security on User, so fall
-// back to a flat projection if the richer one is rejected.
-const RUNNING_DETAIL_QUERIES = [
-  "SELECT Id, Status, JobType, MethodName, ApexClass.Name, CreatedBy.Name, CreatedDate, " +
-    "TotalJobItems, JobItemsProcessed, NumberOfErrors, ExtendedStatus " +
-    `FROM AsyncApexJob WHERE ${RUNNING_WHERE} ORDER BY CreatedDate DESC LIMIT 25`,
-  "SELECT Id, Status, JobType, MethodName, ApexClassId, CreatedById, CreatedDate, " +
-    "TotalJobItems, JobItemsProcessed, NumberOfErrors, ExtendedStatus " +
-    `FROM AsyncApexJob WHERE ${RUNNING_WHERE} ORDER BY CreatedDate DESC LIMIT 25`,
-];
-let runningQueryIndex = 0;
+// Relationship fields can be blocked by field-level security on User, so keep a
+// flat projection to fall back to. Both AsyncApexJob queries share the choice.
+const JOB_FIELD_SETS = ["ApexClass.Name, CreatedBy.Name", "ApexClassId, CreatedById"];
+let jobFieldsIndex = 0;
+
+const runningDetailQuery = () =>
+  `SELECT Id, Status, JobType, MethodName, ${JOB_FIELD_SETS[jobFieldsIndex]}, CreatedDate, ` +
+  "TotalJobItems, JobItemsProcessed, NumberOfErrors, ExtendedStatus " +
+  `FROM AsyncApexJob WHERE ${RUNNING_WHERE} ORDER BY CreatedDate DESC LIMIT 25`;
+
+const failedJobsQuery = () =>
+  `SELECT Id, JobType, MethodName, ${JOB_FIELD_SETS[jobFieldsIndex]}, CompletedDate, ` +
+  "ExtendedStatus, NumberOfErrors, TotalJobItems, JobItemsProcessed " +
+  `FROM AsyncApexJob WHERE Status = 'Failed' AND ${NOT_WORKER} ` +
+  "AND CompletedDate = LAST_N_DAYS:1 ORDER BY CompletedDate DESC LIMIT 15";
 
 const DEPLOY_FIELDS_FULL =
   "Id, Status, StartDate, CompletedDate, CreatedDate, CreatedBy.Name, CheckOnly, " +
@@ -192,7 +223,7 @@ async function fetchDeployments() {
         (a, b) => Date.parse(b.CreatedDate || b.StartDate || 0) - Date.parse(a.CreatedDate || a.StartDate || 0)
       );
     } catch (err) {
-      if (err.status === 401 || err.status === 403) throw err;
+      if (isAuthError(err)) throw err;
       lastError = err;
     }
   }
@@ -227,6 +258,7 @@ let deployTimer = null;
 let jobsTimer = null;
 let deployBusy = false;
 let jobsBusy = false;
+let orgBusy = false;
 let deployStamp = null;
 let jobsStamp = null;
 
@@ -261,30 +293,38 @@ async function refreshJobs({ retry = true } = {}) {
   el.refreshJobs.classList.add("spin");
 
   try {
-    const results = await client.batch([
+    const r = await client.batch([
       soqlPath(Q_SCHEDULED),
       soqlPath(Q_RUNNING),
       soqlPath(Q_FLEX),
-      soqlPath(RUNNING_DETAIL_QUERIES[runningQueryIndex]),
+      soqlPath(runningDetailQuery()),
+      soqlPath(Q_SCHEDULED_DETAIL),
+      soqlPath(failedJobsQuery()),
+      soqlPath(Q_LOG_COUNT),
+      soqlPath(Q_LOG_SIZE),
+      "limits",
     ]);
 
-    if (results.some(r => !r.ok && isAuthError(r.error))) {
+    if (r.some(x => !x.ok && isAuthError(x.error))) {
       showBanner("Salesforce session expired. Reload the page and try again.");
       return;
     }
 
-    // The detail projection was rejected - drop to the flat one and try again once.
-    const detail = results[3];
-    if (!detail.ok && retry && runningQueryIndex < RUNNING_DETAIL_QUERIES.length - 1) {
-      runningQueryIndex++;
+    // The relationship projection was rejected - drop to the flat one, once.
+    if (!r[3].ok && retry && jobFieldsIndex < JOB_FIELD_SETS.length - 1) {
+      jobFieldsIndex++;
       jobsBusy = false;
       el.refreshJobs.classList.remove("spin");
       return refreshJobs({ retry: false });
     }
 
     hideBanner();
-    renderKpis(results.slice(0, 3));
-    renderRunningJobs(detail, results[1]);
+    renderKpis(r.slice(0, 3));
+    renderRunningJobs(r[3], r[1]);
+    renderScheduledJobs(r[4], r[0]);
+    renderFailedJobs(r[5]);
+    renderLogs(r[6], r[7]);
+    renderLimits(r[8]);
     jobsStamp = new Date();
   } catch (err) {
     if (isAuthError(err)) {
@@ -301,7 +341,23 @@ async function refreshJobs({ retry = true } = {}) {
   }
 }
 
-const isAuthError = err => err?.status === 401 || err?.status === 403;
+/** Org identity and code coverage: slow-moving, so no timer - boot and on demand. */
+async function refreshOrg() {
+  if (orgBusy || !client) return;
+  orgBusy = true;
+  el.refreshOrg.classList.add("spin");
+
+  const [org, coverage] = await Promise.allSettled([
+    client.query(Q_ORG),
+    client.query(Q_COVERAGE, { tooling: true }),
+  ]);
+
+  if (org.status === "fulfilled") renderOrgIdentity(org.value.records?.[0]);
+  renderCoverage(coverage);
+
+  orgBusy = false;
+  el.refreshOrg.classList.remove("spin");
+}
 
 function scheduleDeploys() {
   clearTimeout(deployTimer);
@@ -330,6 +386,80 @@ function updatePollNote() {
 function stampFooter() {
   const t = d => (d ? d.toLocaleTimeString() : "—");
   el.updated.textContent = `deploys ${t(deployStamp)} · jobs ${t(jobsStamp)}`;
+}
+
+// ---------------------------------------------------------------------------
+// rendering: org identity, limits, coverage
+// ---------------------------------------------------------------------------
+
+function renderOrgIdentity(org) {
+  if (!org) return;
+  el.orgName.textContent = org.Name || "Stara SF Toolbox";
+  el.orgName.title = `${org.Name || ""} · ${org.OrganizationType || ""} · ${org.InstanceName || ""}` +
+    ` · v${chrome.runtime.getManifest().version}`;
+  el.envBadge.textContent = org.IsSandbox ? "Sandbox" : "Prod";
+  el.envBadge.className = `env ${org.IsSandbox ? "sandbox" : "prod"}`;
+  el.envBadge.hidden = false;
+}
+
+// Only the limits worth watching day to day; /limits returns dozens.
+const WATCHED_LIMITS = [
+  ["DailyApiRequests", "Daily API requests", "n"],
+  ["DailyAsyncApexExecutions", "Daily async Apex", "n"],
+  ["DataStorageMB", "Data storage", "mb"],
+  ["FileStorageMB", "File storage", "mb"],
+  ["SingleEmail", "Single email", "n"],
+  ["MassEmail", "Mass email", "n"],
+  ["HourlyTimeBasedWorkflow", "Hourly time-based WF", "n"],
+];
+
+function renderLimits(result) {
+  if (!result.ok) {
+    el.limits.innerHTML = `<p class="empty">Limits unavailable: ${esc(result.error.message)}</p>`;
+    return;
+  }
+
+  const data = result.value || {};
+  const rows = WATCHED_LIMITS.map(([key, label, unit]) => {
+    const lim = data[key];
+    if (!lim || typeof lim.Max !== "number") return "";
+
+    const max = lim.Max;
+    const used = max - (lim.Remaining ?? 0);
+    const pct = max > 0 ? Math.min(100, Math.round((used / max) * 100)) : 0;
+    const tone = pct >= 90 ? "bad" : pct >= 75 ? "warn" : "";
+    const fmt = unit === "mb" ? formatMb : formatNumber;
+
+    return `<div class="lim ${tone}" title="${esc(label)}: ${used} of ${max}">
+      <i style="width:${pct}%"></i>
+      <span class="lim-l">${esc(label)}</span>
+      <span class="lim-v">${fmt(used)} / ${fmt(max)}</span>
+      <span class="lim-p">${pct}%</span>
+    </div>`;
+  }).filter(Boolean);
+
+  el.limits.innerHTML = rows.length
+    ? `<div class="lims">${rows.join("")}</div>`
+    : `<p class="empty">No matching limits returned by this org.</p>`;
+}
+
+function renderCoverage(settled) {
+  if (settled.status !== "fulfilled") {
+    el.coverage.innerHTML = "";
+    return;
+  }
+  const pct = settled.value.records?.[0]?.PercentCovered;
+  if (typeof pct !== "number") {
+    el.coverage.innerHTML = "";
+    return;
+  }
+  // 75% is the deployment gate, so that is the line that matters.
+  const tone = pct >= 75 ? "ok" : "bad";
+  el.coverage.innerHTML = `<div class="cov ${tone}">
+    <span>Apex coverage</span>
+    <span class="bar"><i class="${tone}" style="width:${Math.min(100, pct)}%"></i></span>
+    <span class="cov-n">${pct}%</span>
+  </div>`;
 }
 
 // ---------------------------------------------------------------------------
@@ -379,6 +509,7 @@ function renderKpis(results, fatal) {
  * polls we can measure the real rate instead.
  */
 const jobSamples = new Map();
+const MIN_SAMPLE_SPAN_MS = 10000;
 
 function sampleJob(job, now) {
   const n = Number(job.JobItemsProcessed) || 0;
@@ -392,8 +523,6 @@ function sampleJob(job, now) {
   existing.lastN = n;
   return existing;
 }
-
-const MIN_SAMPLE_SPAN_MS = 10000;
 
 function estimateEta(job, sample, now) {
   const total = Number(job.TotalJobItems) || 0;
@@ -472,9 +601,7 @@ function jobRow(job, now) {
     `</div>`,
   ];
 
-  if (total > 0) {
-    parts.push(progressBar("Batches", done, total, errors));
-  }
+  if (total > 0) parts.push(progressBar("Batches", done, total, errors));
 
   if (eta) {
     const basis = eta.measured
@@ -487,9 +614,7 @@ function jobRow(job, now) {
     );
   }
 
-  if (job.ExtendedStatus) {
-    parts.push(`<p class="job-ext">${esc(job.ExtendedStatus)}</p>`);
-  }
+  if (job.ExtendedStatus) parts.push(`<p class="job-ext">${esc(job.ExtendedStatus)}</p>`);
 
   parts.push(`</div>`);
   return parts.join("");
@@ -505,6 +630,231 @@ function prettyJobType(type) {
     case "SharingRecalculation": return "Sharing";
     case "ApexToken": return "Token";
     default: return type || "Apex";
+  }
+}
+
+// ---------------------------------------------------------------------------
+// rendering: failed jobs
+// ---------------------------------------------------------------------------
+
+function renderFailedJobs(result) {
+  if (!result.ok) {
+    el.failedJobs.innerHTML = "";
+    return;
+  }
+  const jobs = result.value.records || [];
+  if (jobs.length === 0) {
+    el.failedJobs.innerHTML = "";
+    return;
+  }
+
+  el.failedJobs.innerHTML = `
+    <details class="group bad">
+      <summary>Failed in the last 24h <span class="count">${jobs.length}</span></summary>
+      ${jobs.map(j => `
+        <div class="cron">
+          <div class="cron-top">
+            <span class="cron-name">${esc(j.ApexClass?.Name || "(class unavailable)")}${
+              j.MethodName ? `.${esc(j.MethodName)}` : ""}</span>
+            <span class="cron-state bad">${esc(prettyJobType(j.JobType))}</span>
+          </div>
+          <div class="cron-meta">
+            <span>${esc(relative(j.CompletedDate))}</span>
+            ${Number(j.NumberOfErrors) > 0 ? `<span>${j.NumberOfErrors} errors</span>` : ""}
+            ${Number(j.TotalJobItems) > 0
+              ? `<span>${j.JobItemsProcessed}/${j.TotalJobItems} batches</span>` : ""}
+          </div>
+          ${j.ExtendedStatus ? `<div class="cron-meta">${esc(j.ExtendedStatus)}</div>` : ""}
+        </div>`).join("")}
+    </details>`;
+}
+
+// ---------------------------------------------------------------------------
+// rendering: scheduled jobs
+// ---------------------------------------------------------------------------
+
+const BAD_CRON_STATES = new Set(["ERROR", "PAUSED", "PAUSED_BLOCKED", "BLOCKED"]);
+
+function renderScheduledJobs(result, countResult) {
+  if (!result.ok) {
+    el.scheduledJobs.innerHTML = "";
+    return;
+  }
+  const rows = result.value.records || [];
+  if (rows.length === 0) {
+    el.scheduledJobs.innerHTML = "";
+    return;
+  }
+
+  const total = countResult?.ok ? countResult.value.totalSize ?? rows.length : rows.length;
+  const unhealthy = rows.filter(r => BAD_CRON_STATES.has(r.State)).length;
+
+  // Closed by default - a production org can carry dozens of these.
+  el.scheduledJobs.innerHTML = `
+    <details class="group ${unhealthy ? "bad" : ""}">
+      <summary>
+        Scheduled jobs <span class="count">${total}</span>
+        ${unhealthy ? `<span class="count">${unhealthy} need attention</span>` : ""}
+      </summary>
+      ${rows.map(cronRow).join("")}
+      ${total > rows.length ? `<p class="jobs-more">+ ${total - rows.length} more not shown</p>` : ""}
+    </details>`;
+}
+
+function cronRow(c) {
+  const state = c.State || "";
+  const tone = BAD_CRON_STATES.has(state) ? (state === "ERROR" ? "bad" : "hold") : "";
+  return `<div class="cron">
+    <div class="cron-top">
+      <span class="cron-name">${esc(c.CronJobDetail?.Name || "(unnamed)")}</span>
+      <span class="cron-state ${tone}">${esc(state.replace(/_/g, " "))}</span>
+    </div>
+    <div class="cron-meta">
+      <span>next ${esc(c.NextFireTime ? absoluteShort(c.NextFireTime) : "—")}</span>
+      <span>last ${esc(c.PreviousFireTime ? relative(c.PreviousFireTime) : "never")}</span>
+      <span>${c.TimesTriggered ?? 0} runs</span>
+      ${c.CronExpression ? `<span><code>${esc(c.CronExpression)}</code></span>` : ""}
+    </div>
+  </div>`;
+}
+
+// ---------------------------------------------------------------------------
+// rendering: debug logs
+// ---------------------------------------------------------------------------
+
+let logCount = 0;
+let purgeArmed = false;
+let purgeTimer = null;
+// Survives the re-render that a post-purge refresh triggers, so the result of a
+// destructive action does not vanish a second after it finishes.
+let purgeMessage = "";
+
+function renderLogs(countResult, sizeResult) {
+  if (!countResult.ok) {
+    el.logs.innerHTML = `<p class="empty">Debug logs unavailable: ${esc(countResult.error.message)}</p>`;
+    return;
+  }
+
+  logCount = countResult.value.totalSize ?? 0;
+  // SUM(LogLength) is not supported everywhere; the count alone is still useful.
+  const bytes = sizeResult.ok ? sizeResult.value.records?.[0]?.total : null;
+  const size = typeof bytes === "number" ? ` <span class="sub">· ${formatBytes(bytes)}</span>` : "";
+
+  el.logs.innerHTML = `
+    <div class="logline">
+      <span class="grow"><b>${formatNumber(logCount)}</b> log${logCount === 1 ? "" : "s"}${size}</span>
+      <button class="danger-btn" data-action="purge-logs" ${logCount ? "" : "disabled"}>Delete all</button>
+    </div>
+    <div class="log-progress" id="logProgress" ${purgeMessage ? "" : "hidden"}>${esc(purgeMessage)}</div>`;
+
+  purgeArmed = false;
+}
+
+function purgeButton() {
+  return el.logs.querySelector('[data-action="purge-logs"]');
+}
+
+function onPurgeClick() {
+  const btn = purgeButton();
+  if (!btn || btn.disabled) return;
+
+  // Two-step confirm: this is irreversible and there is no undo in Salesforce.
+  if (!purgeArmed) {
+    purgeArmed = true;
+    btn.classList.add("confirm");
+    btn.textContent = `Delete ${formatNumber(logCount)}? Click again`;
+    clearTimeout(purgeTimer);
+    purgeTimer = setTimeout(() => {
+      purgeArmed = false;
+      btn.classList.remove("confirm");
+      btn.textContent = "Delete all";
+    }, 5000);
+    return;
+  }
+
+  clearTimeout(purgeTimer);
+  purgeArmed = false;
+  runPurge(btn);
+}
+
+async function runPurge(btn) {
+  const progress = document.getElementById("logProgress");
+  const total = logCount;
+  purgeMessage = "";
+  btn.disabled = true;
+  btn.classList.remove("confirm");
+  btn.textContent = "Deleting…";
+  progress.hidden = false;
+  progress.textContent = "Starting…";
+
+  try {
+    const { deleted, failed } = await purgeApexLogs((done, bad) => {
+      progress.textContent = `Deleted ${formatNumber(done)} of ${formatNumber(total)}` +
+        (bad ? ` · ${bad} refused` : "");
+    });
+    purgeMessage = `Deleted ${formatNumber(deleted)} log${deleted === 1 ? "" : "s"}` +
+      (failed ? `, ${formatNumber(failed)} could not be deleted` : "") + ".";
+  } catch (err) {
+    purgeMessage = `Failed: ${err.message}`;
+  } finally {
+    progress.textContent = purgeMessage;
+    btn.disabled = false;
+    btn.textContent = "Delete all";
+    await refreshJobs(); // re-renders with the new count, keeping purgeMessage
+  }
+}
+
+/**
+ * ApexLog cannot be deleted with Apex DML, so it goes through the REST API in
+ * pages of 200. composite/sobjects handles the whole page in one call; if the org
+ * refuses that for ApexLog we fall back to individual deletes.
+ */
+async function purgeApexLogs(onProgress) {
+  const v = await client.apiVersion();
+  let deleted = 0;
+  let failed = 0;
+
+  for (;;) {
+    const page = await client.query("SELECT Id FROM ApexLog LIMIT 200");
+    const ids = (page.records || []).map(r => r.Id);
+    if (ids.length === 0) break;
+
+    const res = await deleteRecords(ids, v);
+    deleted += res.ok;
+    failed += res.failed;
+    onProgress(deleted, failed);
+
+    // Nothing in this page could be removed - stop rather than spin forever.
+    if (res.ok === 0) break;
+  }
+
+  return { deleted, failed };
+}
+
+async function deleteRecords(ids, v) {
+  try {
+    const res = await client.request(
+      `/services/data/v${v}/composite/sobjects?ids=${ids.join(",")}&allOrNone=false`,
+      { method: "DELETE" }
+    );
+    const arr = toArray(res);
+    return {
+      ok: arr.filter(x => x.success).length,
+      failed: arr.filter(x => !x.success).length,
+    };
+  } catch {
+    let ok = 0;
+    let failed = 0;
+    for (let i = 0; i < ids.length; i += 10) {
+      const settled = await Promise.allSettled(
+        ids.slice(i, i + 10).map(id =>
+          client.request(`/services/data/v${v}/sobjects/ApexLog/${id}`, { method: "DELETE" })
+        )
+      );
+      ok += settled.filter(s => s.status === "fulfilled").length;
+      failed += settled.filter(s => s.status === "rejected").length;
+    }
+    return { ok, failed };
   }
 }
 
@@ -565,20 +915,12 @@ function deployCard(d, details) {
   ];
 
   if (d.NumberComponentsTotal > 0) {
-    parts.push(progressBar(
-      "Components",
-      d.NumberComponentsDeployed,
-      d.NumberComponentsTotal,
-      d.NumberComponentErrors
-    ));
+    parts.push(progressBar("Components", d.NumberComponentsDeployed,
+      d.NumberComponentsTotal, d.NumberComponentErrors));
   }
   if (d.NumberTestsTotal > 0) {
-    parts.push(progressBar(
-      "Tests",
-      d.NumberTestsCompleted,
-      d.NumberTestsTotal,
-      d.NumberTestErrors
-    ));
+    parts.push(progressBar("Tests", d.NumberTestsCompleted,
+      d.NumberTestsTotal, d.NumberTestErrors));
   }
 
   if (active && d.StateDetail) {
@@ -598,6 +940,12 @@ function deployCard(d, details) {
   } else if (details instanceof Error) {
     parts.push(`<p class="state-detail">Failure details unavailable: ${esc(details.message)}</p>`);
   }
+
+  parts.push(`<div class="card-actions">
+    <button class="chip" data-deploy-setup="${esc(d.Id)}">Open in Setup</button>
+    <button class="chip" data-copy="${esc(d.Id)}">Copy Id</button>
+    <button class="chip" data-copy="sf project deploy report --job-id ${esc(d.Id)}">Copy sf command</button>
+  </div>`);
 
   parts.push(`</div>`);
   return parts.join("");
@@ -663,6 +1011,90 @@ function statusLook(status) {
 }
 
 // ---------------------------------------------------------------------------
+// rendering: shortcuts and record jump
+// ---------------------------------------------------------------------------
+
+const SC_ICONS = {
+  devconsole: `<svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><rect x="1.6" y="2.6" width="12.8" height="10.8" rx="1.4"/><path d="M4.6 6.6 6.6 8.6l-2 2M8.6 10.6h3"/></svg>`,
+  apex: `<svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M9 1.8 3.4 9h3.4l-.8 5.2L12.6 7H9.2z"/></svg>`,
+  path: `<svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M6.4 3.2h6.4v6.4"/><path d="M12.8 3.2 6 10M9.6 12.8H3.2V6.4"/></svg>`,
+};
+
+async function renderShortcuts() {
+  const list = await loadShortcuts();
+  el.shortcuts.innerHTML = list.map(s => {
+    if (s.kind === "devconsole") return `<button class="sc" data-devconsole>${SC_ICONS.devconsole}${esc(s.label)}</button>`;
+    if (s.kind === "apex") return `<button class="sc" data-apexrunner>${SC_ICONS.apex}${esc(s.label)}</button>`;
+    if (!s.path) return "";
+    return `<button class="sc" data-setup="${esc(s.path)}">${SC_ICONS.path}${esc(s.label)}</button>`;
+  }).join("");
+}
+
+/**
+ * Record Id lookup. The first three characters of a Salesforce Id identify the
+ * object, and the global describe hands us the whole prefix table in one call.
+ */
+async function keyPrefixMap() {
+  const cacheKey = `prefixes:${client.host}`;
+  const cached = sessionStorage.getItem(cacheKey);
+  if (cached) return JSON.parse(cached);
+
+  const v = await client.apiVersion();
+  const res = await client.request(`/services/data/v${v}/sobjects/`);
+  const map = {};
+  for (const s of res.sobjects || []) {
+    if (s.keyPrefix && !map[s.keyPrefix]) map[s.keyPrefix] = s.name;
+  }
+  sessionStorage.setItem(cacheKey, JSON.stringify(map));
+  return map;
+}
+
+let jumpTarget = null;
+
+async function onJumpInput() {
+  const raw = el.jumpInput.value.trim();
+  jumpTarget = null;
+
+  if (!raw) {
+    el.jumpHint.textContent = "";
+    el.jumpHint.classList.remove("bad");
+    return;
+  }
+  if (!/^[a-zA-Z0-9]{15}([a-zA-Z0-9]{3})?$/.test(raw)) {
+    el.jumpHint.textContent = "Ids are 15 or 18 characters.";
+    el.jumpHint.classList.add("bad");
+    return;
+  }
+
+  el.jumpHint.classList.remove("bad");
+  el.jumpHint.textContent = "Looking up…";
+
+  try {
+    const map = await keyPrefixMap();
+    const name = map[raw.slice(0, 3)];
+    if (!name) {
+      el.jumpHint.textContent = `Unknown object prefix "${raw.slice(0, 3)}".`;
+      el.jumpHint.classList.add("bad");
+      return;
+    }
+    jumpTarget = { name, id: raw };
+    el.jumpHint.textContent = `${name} — press Enter to open`;
+  } catch (err) {
+    el.jumpHint.textContent = err.message;
+    el.jumpHint.classList.add("bad");
+  }
+}
+
+function onJumpKey(ev) {
+  if (ev.key !== "Enter" || !jumpTarget || !session) return;
+  toHost({
+    type: "navigate",
+    url: `https://${session.lightningHost}/lightning/r/${jumpTarget.name}/${jumpTarget.id}/view`,
+    newTab: ev.ctrlKey || ev.metaKey || ev.shiftKey,
+  });
+}
+
+// ---------------------------------------------------------------------------
 // formatting
 // ---------------------------------------------------------------------------
 
@@ -701,12 +1133,60 @@ function relative(iso) {
   return new Date(t).toLocaleDateString();
 }
 
+/** Short absolute stamp for future times, where "in 4h" is less useful than "14:00". */
+function absoluteShort(iso) {
+  const t = Date.parse(iso);
+  if (Number.isNaN(t)) return "—";
+  const d = new Date(t);
+  const sameDay = d.toDateString() === new Date().toDateString();
+  const time = d.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
+  return sameDay ? time : `${d.toLocaleDateString([], { day: "2-digit", month: "2-digit" })} ${time}`;
+}
+
+const formatNumber = n => Number(n || 0).toLocaleString();
+
+function formatMb(mb) {
+  const n = Number(mb) || 0;
+  return n >= 1024 ? `${(n / 1024).toFixed(1)} GB` : `${formatNumber(Math.round(n))} MB`;
+}
+
+function formatBytes(bytes) {
+  const n = Number(bytes) || 0;
+  if (n >= 1024 ** 3) return `${(n / 1024 ** 3).toFixed(2)} GB`;
+  if (n >= 1024 ** 2) return `${(n / 1024 ** 2).toFixed(1)} MB`;
+  return `${(n / 1024).toFixed(0)} KB`;
+}
+
 const shortId = id => (id || "").slice(0, 15);
 
 function esc(v) {
   return String(v ?? "").replace(/[&<>"']/g, c =>
     ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c])
   );
+}
+
+async function copyText(text) {
+  try {
+    await navigator.clipboard.writeText(text);
+    return true;
+  } catch {
+    // Clipboard API can be refused inside a cross-origin iframe; fall back.
+    const ta = document.createElement("textarea");
+    ta.value = text;
+    ta.style.position = "fixed";
+    ta.style.opacity = "0";
+    document.body.appendChild(ta);
+    ta.select();
+    const ok = document.execCommand("copy");
+    ta.remove();
+    return ok;
+  }
+}
+
+function flash(button, message) {
+  const original = button.textContent;
+  button.textContent = message;
+  setTimeout(() => { button.textContent = original; }, 1200);
 }
 
 function showBanner(html) {
@@ -763,14 +1243,33 @@ async function checkForUpdate({ force = false } = {}) {
 // interactions
 // ---------------------------------------------------------------------------
 
-document.addEventListener("click", ev => {
+document.addEventListener("click", async ev => {
   const link = ev.target.closest("[data-href]");
   if (link) {
     toHost({ type: "navigate", url: link.dataset.href, newTab: true });
     return;
   }
 
-  const action = ev.target.closest("[data-action]")?.dataset.action;
+  const copySource = ev.target.closest("[data-copy]");
+  if (copySource) {
+    const ok = await copyText(copySource.dataset.copy);
+    flash(copySource, ok ? "Copied" : "Copy failed");
+    return;
+  }
+
+  const deploySetup = ev.target.closest("[data-deploy-setup]");
+  if (deploySetup && session) {
+    const inner = `/changemgmt/monitorDeploymentsDetails.apexp?asyncId=${deploySetup.dataset.deploySetup}`;
+    toHost({
+      type: "navigate",
+      url: `https://${session.lightningHost}/lightning/setup/DeployStatus/page?address=${encodeURIComponent(inner)}`,
+      newTab: ev.ctrlKey || ev.metaKey || ev.shiftKey,
+    });
+    return;
+  }
+
+  const actionEl = ev.target.closest("[data-action]");
+  const action = actionEl?.dataset.action;
   if (action === "reload-ext") {
     // The panel dies with the extension context, so say what happens next first.
     el.updateBanner.innerHTML =
@@ -780,9 +1279,12 @@ document.addEventListener("click", ev => {
     return;
   }
   if (action === "dismiss-update") {
-    const version = ev.target.closest("[data-action]").dataset.version;
-    chrome.storage.local.set({ updateDismissed: version });
+    chrome.storage.local.set({ updateDismissed: actionEl.dataset.version });
     el.updateBanner.hidden = true;
+    return;
+  }
+  if (action === "purge-logs") {
+    onPurgeClick();
     return;
   }
 
@@ -798,25 +1300,38 @@ document.addEventListener("click", ev => {
     return;
   }
 
-  if (ev.target.closest("[data-devconsole]")) {
-    if (!session) return;
+  if (ev.target.closest("[data-devconsole]") && session) {
     toHost({
       type: "openWindow",
       url: `https://${session.apiHost}/_ui/common/apex/debug/ApexCSIPage`,
       name: "DeveloperConsole",
       features: "width=1280,height=800,resizable=yes,scrollbars=yes,toolbar=no,location=no",
     });
+    return;
+  }
+
+  if (ev.target.closest("[data-apexrunner]")) {
+    bg("openApexRunner", { host: pageHost }).catch(err => showBanner(esc(err.message)));
   }
 });
 
 el.refreshDeploy.addEventListener("click", () => refreshDeploys());
 el.refreshJobs.addEventListener("click", () => refreshJobs());
+el.refreshOrg.addEventListener("click", () => refreshOrg());
 el.refreshAll.addEventListener("click", () => {
   el.refreshAll.classList.add("spin");
-  Promise.all([refreshDeploys(), refreshJobs(), checkForUpdate({ force: true })])
+  Promise.all([refreshDeploys(), refreshJobs(), refreshOrg(), checkForUpdate({ force: true })])
     .finally(() => el.refreshAll.classList.remove("spin"));
 });
 el.close.addEventListener("click", () => toHost({ type: "close" }));
+el.optionsBtn.addEventListener("click", () => chrome.runtime.openOptionsPage());
+el.editShortcuts.addEventListener("click", () => chrome.runtime.openOptionsPage());
+el.jumpInput.addEventListener("input", onJumpInput);
+el.jumpInput.addEventListener("keydown", onJumpKey);
+
+chrome.storage.onChanged.addListener((changes, area) => {
+  if (area === "sync" && changes[SHORTCUTS_KEY]) renderShortcuts();
+});
 
 window.addEventListener("message", ev => {
   const msg = ev.data;
@@ -843,7 +1358,8 @@ window.addEventListener("message", ev => {
 async function init() {
   toHost({ type: "ready" });
 
-  document.querySelector(".hd-title").title = `v${chrome.runtime.getManifest().version}`;
+  el.orgName.title = `v${chrome.runtime.getManifest().version}`;
+  renderShortcuts();
   checkForUpdate(); // fire and forget - never blocks the org data
 
   try {
@@ -851,6 +1367,7 @@ async function init() {
   } catch (err) {
     el.orgHost.textContent = "not connected";
     el.deploy.innerHTML = "";
+    el.limits.innerHTML = "";
     showBanner(esc(err.message));
     return;
   }
@@ -859,12 +1376,7 @@ async function init() {
   el.orgHost.textContent = session.apiHost;
   el.orgHost.title = `${session.apiHost} · org ${session.orgId}`;
 
-  const sandbox = /\.sandbox\.|--/.test(session.apiHost);
-  el.envBadge.textContent = sandbox ? "Sandbox" : "Prod";
-  el.envBadge.className = `env ${sandbox ? "sandbox" : "prod"}`;
-  el.envBadge.hidden = false;
-
-  await Promise.all([refreshDeploys(), refreshJobs()]);
+  await Promise.all([refreshDeploys(), refreshJobs(), refreshOrg()]);
 }
 
 init();

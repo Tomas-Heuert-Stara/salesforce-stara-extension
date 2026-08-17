@@ -1,0 +1,41 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <title>Stara SF Toolbox — Options</title>
+  <link rel="stylesheet" href="page.css">
+</head>
+<body>
+  <div class="page">
+    <div class="page-hd">
+      <div class="grow">
+        <h1>Stara SF Toolbox</h1>
+        <p class="sub">Version <span id="version">—</span></p>
+      </div>
+      <span class="saved" id="saved">Saved</span>
+    </div>
+
+    <div class="block">
+      <h2>Panel shortcuts</h2>
+      <div class="rows" id="rows"></div>
+
+      <div class="add-row">
+        <select id="catalog"></select>
+        <button class="btn" id="addCatalog">Add</button>
+        <button class="btn" id="addCustom">Add custom</button>
+        <button class="btn danger" id="reset">Restore defaults</button>
+      </div>
+
+      <p class="hint">
+        Paths are relative to the org's Lightning host, so
+        <code>/lightning/setup/Flows/home</code> becomes
+        <code>https://yourorg.lightning.force.com/lightning/setup/Flows/home</code>.
+        Anything you can reach in Setup can go here — copy the path out of the address
+        bar. Changes save automatically and sync to your other machines.
+      </p>
+    </div>
+  </div>
+
+  <script src="options.js" type="module"></script>
+</body>
+</html>

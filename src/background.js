@@ -33,6 +33,11 @@ async function handle(msg, sender) {
       return getSession(msg.host, sender?.tab?.cookieStoreId);
     case "checkUpdate":
       return checkUpdate({ force: !!msg.force });
+    case "openApexRunner": {
+      const url = chrome.runtime.getURL(`src/apex.html?host=${encodeURIComponent(msg.host)}`);
+      await chrome.tabs.create({ url });
+      return { opened: true };
+    }
     case "reloadExtension":
       // Re-reads the folder from disk, which is what a developer-mode install needs
       // after a git pull. Tears down every content script, hence the caller warning.

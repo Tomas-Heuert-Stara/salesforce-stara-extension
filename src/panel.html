@@ -8,11 +8,17 @@
 <body>
   <header class="hd">
     <div class="hd-org">
-      <span class="hd-title">Stara SF Toolbox</span>
+      <span class="hd-title" id="orgName">Stara SF Toolbox</span>
       <span class="hd-host" id="orgHost">connecting…</span>
     </div>
     <div class="hd-actions">
       <span class="env" id="envBadge" hidden></span>
+      <button class="icon-btn" id="optionsBtn" title="Options">
+        <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5">
+          <circle cx="8" cy="8" r="2.2"/>
+          <path d="M8 1.6v1.7M8 12.7v1.7M14.4 8h-1.7M3.3 8H1.6M12.5 3.5l-1.2 1.2M4.7 11.3l-1.2 1.2M12.5 12.5l-1.2-1.2M4.7 4.7 3.5 3.5"/>
+        </svg>
+      </button>
       <button class="icon-btn" id="refreshAll" title="Refresh everything">
         <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round">
           <path d="M13.5 8a5.5 5.5 0 1 1-1.7-3.9"/><path d="M13.8 2.6v2.6h-2.6"/>
@@ -30,6 +36,7 @@
   <div class="banner" id="banner" hidden></div>
 
   <main class="body">
+    <!-- deployments ---------------------------------------------------- -->
     <section class="sec">
       <h2 class="sec-h">
         <span>Deployment status</span>
@@ -45,6 +52,7 @@
       <div id="deploy" class="deploy"><div class="skeleton"></div></div>
     </section>
 
+    <!-- apex jobs ------------------------------------------------------ -->
     <section class="sec">
       <h2 class="sec-h">
         <span>Apex jobs</span>
@@ -69,30 +77,57 @@
       </div>
       <p class="kpi-err" id="kpiErr" hidden></p>
       <div id="runningJobs"></div>
+      <div id="failedJobs"></div>
+      <div id="scheduledJobs"></div>
     </section>
 
+    <!-- org limits ----------------------------------------------------- -->
     <section class="sec">
-      <h2 class="sec-h"><span>Shortcuts</span></h2>
-      <div class="shortcuts">
-        <button class="sc" data-setup="/lightning/setup/ObjectManager/home">
-          <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linejoin="round">
-            <path d="M8 1.8 14 5v6L8 14.2 2 11V5z"/><path d="M2 5l6 3 6-3M8 8v6.2"/>
-          </svg>
-          Object Manager
-        </button>
-        <button class="sc" data-devconsole>
-          <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
-            <rect x="1.6" y="2.6" width="12.8" height="10.8" rx="1.4"/><path d="M4.6 6.6 6.6 8.6l-2 2M8.6 10.6h3"/>
-          </svg>
-          Developer Console
-        </button>
-        <button class="sc" data-setup="/lightning/setup/DeployStatus/home">
-          <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
-            <path d="M8 11V2.6M4.8 5.8 8 2.6l3.2 3.2"/><path d="M2.4 10.4v2.2c0 .5.4.8.8.8h9.6c.4 0 .8-.3.8-.8v-2.2"/>
-          </svg>
-          Deployment Status
-        </button>
+      <h2 class="sec-h">
+        <span>Org limits</span>
+        <span class="sec-tools">
+          <button class="mini-btn" id="refreshOrg" title="Refresh limits and coverage">
+            <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round">
+              <path d="M13.5 8a5.5 5.5 0 1 1-1.7-3.9"/><path d="M13.8 2.6v2.6h-2.6"/>
+            </svg>
+          </button>
+        </span>
+      </h2>
+      <div id="limits"><div class="skeleton" style="height:120px"></div></div>
+      <div id="coverage"></div>
+    </section>
+
+    <!-- debug logs ----------------------------------------------------- -->
+    <section class="sec">
+      <h2 class="sec-h">
+        <span>Debug logs</span>
+        <span class="sec-tools">
+          <a class="sec-link" href="#" data-setup="/lightning/setup/ApexDebugLogs/home">Setup</a>
+        </span>
+      </h2>
+      <div id="logs"></div>
+    </section>
+
+    <!-- shortcuts ------------------------------------------------------ -->
+    <section class="sec">
+      <h2 class="sec-h">
+        <span>Shortcuts</span>
+        <span class="sec-tools">
+          <button class="mini-btn" id="editShortcuts" title="Edit shortcuts">
+            <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linejoin="round">
+              <path d="M11.2 2.4 13.6 4.8 5.6 12.8 2.4 13.6l.8-3.2z"/>
+            </svg>
+          </button>
+        </span>
+      </h2>
+
+      <div class="jump">
+        <input id="jumpInput" type="text" spellcheck="false" autocomplete="off"
+               placeholder="Paste a record Id to open it…" maxlength="18">
+        <span class="jump-hint" id="jumpHint"></span>
       </div>
+
+      <div class="shortcuts" id="shortcuts"></div>
     </section>
   </main>
 

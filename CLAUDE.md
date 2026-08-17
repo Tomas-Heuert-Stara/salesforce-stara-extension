@@ -54,13 +54,31 @@ Keeping the API calls there also avoids Salesforce's page CSP entirely. The two
 sides talk over `postMessage` (`stara-sfx-panel` / `stara-sfx-host`), since the
 iframe cannot touch `top.location` itself.
 
-**Polling.** Deployments and Apex jobs are on separate timers in
-[src/panel.js](src/panel.js): deploys 4s while one is active, 30s otherwise; jobs
-always 30s. Both stop when the panel is closed or the tab is hidden. Keep it that
-way — a 4s poll that never pauses would chew through the org's daily API limit.
+**Polling.** Three cycles in [src/panel.js](src/panel.js): deploys (4s while one is
+active, 30s otherwise), jobs (always 30s), and org info — limits, coverage, org
+identity — which has no timer at all because it barely changes. Deploys and jobs
+stop when the panel is closed or the tab is hidden. Keep it that way; a 4s poll
+that never pauses would chew through the org's daily API limit.
 
-**API budget.** All Apex job reads share one `composite/batch` call. Add new
-counters as subrequests there rather than as new fetches.
+**API budget.** The entire jobs cycle is one `composite/batch` call with nine
+subrequests. Add new counters as subrequests there rather than as new fetches, and
+mind the 25-subrequest ceiling. Anything slow-moving belongs in the org cycle.
+
+**Other surfaces.** [src/options.html](src/options.html) (shortcut editor, registered
+via `options_ui`) and [src/apex.html](src/apex.html) (Anonymous Apex runner) are
+full-tab extension pages, opened by `chrome.tabs.create` from the service worker.
+They resolve their own session through the same `getSession` message, so they take a
+`?host=` query param naming the Salesforce page host.
+
+**Log capture.** `executeAnonymous` never returns a debug log. The runner creates or
+extends a `DebugLevel` + `TraceFlag` on the current user, snapshots the newest
+`ApexLog` id, executes, then polls for a newer one. Salesforce refuses a second
+overlapping trace flag for the same entity, so the existing one is PATCHed rather
+than duplicated.
+
+**Destructive actions** get a two-click confirm and a visible result that survives the
+refresh that follows. The debug-log purge is the only one so far — keep that bar for
+anything new.
 
 **Query ladders.** `DeployRequest` field availability and the `AsyncApexJob`
 relationship fields vary by org and API version, so both have fallback query lists

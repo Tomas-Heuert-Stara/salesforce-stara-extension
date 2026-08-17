@@ -222,6 +222,20 @@ body {
 .err-item b { display: block; font-weight: 600; word-break: break-word; }
 .err-item span { color: var(--muted); display: block; white-space: pre-wrap; word-break: break-word; }
 
+.card-actions { display: flex; flex-wrap: wrap; gap: 5px; margin-top: 9px; }
+.chip {
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  background: var(--bg);
+  color: var(--muted);
+  font: inherit;
+  font-size: 10.5px;
+  font-weight: 550;
+  padding: 3px 9px;
+  cursor: pointer;
+}
+.chip:hover { border-color: var(--brand); color: var(--brand); }
+
 .recent > summary { cursor: pointer; font-size: 11.5px; color: var(--muted); list-style: none; padding: 2px 0; }
 .recent > summary::-webkit-details-marker { display: none; }
 .recent > summary::before { content: "▸ "; }
@@ -295,6 +309,130 @@ body {
 .job-ext { margin-top: 4px; font-size: 11px; color: var(--muted); word-break: break-word; }
 .job-errs { color: var(--err); font-weight: 600; }
 .jobs-more { font-size: 11px; color: var(--muted); padding-top: 2px; }
+
+/* ---- collapsible job groups -------------------------------------------- */
+.group { margin-top: 9px; }
+.group > summary {
+  cursor: pointer;
+  list-style: none;
+  font-size: 11.5px;
+  font-weight: 600;
+  color: var(--muted);
+  padding: 4px 0;
+  display: flex;
+  align-items: center;
+  gap: 5px;
+}
+.group > summary::-webkit-details-marker { display: none; }
+.group > summary::before { content: "▸"; font-size: 9px; }
+.group[open] > summary::before { content: "▾"; }
+.group.bad > summary { color: var(--err); }
+.group .count {
+  background: var(--bg-sunk);
+  border-radius: 999px;
+  padding: 1px 6px;
+  font-size: 10px;
+  font-variant-numeric: tabular-nums;
+}
+.group.bad .count { background: var(--err-soft); }
+
+.cron { border-top: 1px solid var(--line); padding: 6px 0; font-size: 11.5px; }
+.cron-top { display: flex; align-items: center; gap: 6px; }
+.cron-name { font-weight: 600; word-break: break-word; min-width: 0; }
+.cron-state {
+  font-size: 9.5px;
+  font-weight: 700;
+  letter-spacing: .04em;
+  text-transform: uppercase;
+  padding: 1px 5px;
+  border-radius: 999px;
+  flex: none;
+  margin-left: auto;
+  background: var(--bg-sunk);
+  color: var(--muted);
+}
+.cron-state.bad { background: var(--err-soft); color: var(--err); }
+.cron-state.hold { background: var(--warn-soft); color: var(--warn); }
+.cron-meta { color: var(--muted); margin-top: 1px; display: flex; flex-wrap: wrap; gap: 1px 9px; }
+.cron-meta code {
+  font-family: ui-monospace, Consolas, monospace;
+  background: var(--bg-sunk);
+  border-radius: 3px;
+  padding: 0 3px;
+}
+
+/* ---- org limits -------------------------------------------------------- */
+.lims { display: flex; flex-direction: column; gap: 3px; }
+.lim {
+  position: relative;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 4px 8px;
+  border-radius: 5px;
+  background: var(--bg-sunk);
+  overflow: hidden;
+  font-size: 11.5px;
+}
+.lim > i {
+  position: absolute;
+  inset: 0 auto 0 0;
+  background: var(--run);
+  opacity: .22;
+  transition: width .3s ease;
+}
+.lim.warn > i { background: var(--warn); opacity: .3; }
+.lim.bad > i { background: var(--err); opacity: .3; }
+.lim-l { position: relative; flex: 1; min-width: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.lim-v { position: relative; font-variant-numeric: tabular-nums; color: var(--muted); flex: none; }
+.lim-p { position: relative; font-variant-numeric: tabular-nums; font-weight: 650; flex: none; width: 34px; text-align: right; }
+.lim.warn .lim-p { color: var(--warn); }
+.lim.bad .lim-p { color: var(--err); }
+
+.cov { margin-top: 7px; display: flex; align-items: center; gap: 8px; font-size: 11.5px; }
+.cov-n { font-weight: 700; font-variant-numeric: tabular-nums; }
+.cov.ok .cov-n { color: var(--ok); }
+.cov.bad .cov-n { color: var(--err); }
+.cov .bar { flex: 1; }
+
+/* ---- debug logs -------------------------------------------------------- */
+.logline { display: flex; align-items: center; gap: 8px; font-size: 12px; }
+.logline .grow { flex: 1; min-width: 0; }
+.logline b { font-variant-numeric: tabular-nums; }
+.logline .sub { color: var(--muted); font-size: 11px; }
+.danger-btn {
+  border: 1px solid var(--err);
+  color: var(--err);
+  background: transparent;
+  border-radius: 5px;
+  font: inherit;
+  font-size: 11px;
+  font-weight: 600;
+  padding: 3px 9px;
+  cursor: pointer;
+  flex: none;
+}
+.danger-btn:hover { background: var(--err-soft); }
+.danger-btn:disabled { opacity: .5; cursor: default; }
+.danger-btn.confirm { background: var(--err); color: #fff; }
+.log-progress { margin-top: 7px; font-size: 11.5px; color: var(--muted); }
+
+/* ---- record id jump ---------------------------------------------------- */
+.jump { margin-bottom: 8px; }
+.jump input {
+  width: 100%;
+  padding: 7px 9px;
+  border: 1px solid var(--line);
+  border-radius: 7px;
+  background: var(--bg);
+  color: var(--text);
+  font: inherit;
+  font-family: ui-monospace, Consolas, monospace;
+  font-size: 12px;
+}
+.jump input:focus { outline: none; border-color: var(--brand); }
+.jump-hint { display: block; margin-top: 4px; font-size: 11px; color: var(--muted); min-height: 14px; }
+.jump-hint.bad { color: var(--err); }
 
 /* ---- shortcuts --------------------------------------------------------- */
 .shortcuts { display: flex; flex-direction: column; gap: 5px; }
