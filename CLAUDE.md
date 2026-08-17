@@ -51,7 +51,7 @@ hence it lives in the service worker.
 page embedded by [src/content.js](src/content.js). Extension pages keep
 cross-origin fetch privileges from `host_permissions`; MV3 content scripts do not.
 Keeping the API calls there also avoids Salesforce's page CSP entirely. The two
-sides talk over `postMessage` (`stara-sfx-panel` / `stara-sfx-host`), since the
+sides talk over `postMessage` (`orgscope-panel` / `orgscope-host`), since the
 iframe cannot touch `top.location` itself.
 
 **Polling.** Four cycles in [src/panel.js](src/panel.js): deploys (4s while one is
@@ -102,6 +102,43 @@ add them to the richest variant only and let the ladder degrade.
 
 **API version** is discovered at runtime from `/services/data/`. Never hardcode
 one.
+
+## Internationalisation
+
+Chrome's own i18n (`_locales` + `chrome.i18n.getMessage`) resolves against the
+*browser's* UI language with no runtime override, so a user-chosen language needs
+the hand-rolled runtime in [src/i18n/index.js](src/i18n/index.js). Dictionaries are
+plain ES modules; English is always loaded as the fallback.
+
+**Any user-visible string goes through `t()`.** The workflow is: add the key to
+`en.js` first, translate it in the other locales, then `node tools/check-i18n.js`.
+That script is the safety net for the one thing that actually goes wrong here —
+coverage. Strings on error paths only surface when something breaks, so a missed
+one can sit there for months. It verifies key parity, plural categories, that every
+referenced key exists, that no key is dead, and that no sentence-shaped literal is
+still hard-coded.
+
+Things worth not relearning:
+
+- **Plural entries are objects keyed by CLDR category**, selected via
+  `Intl.PluralRules`. Do not assume one/other: Spanish and Portuguese need `many`
+  (exact millions) and Russian needs `one/few/many`. The check script asks Intl for
+  each locale's real category list rather than trusting a guess.
+- **Relative time uses `Intl.RelativeTimeFormat`**, so "5m ago" needs no dictionary
+  entries in any language. Don't reintroduce hand-written ones.
+- **`t()` does not escape.** Dictionary strings are ours and trusted; interpolated
+  params often are not. Escape params at the call site when the result goes into
+  `innerHTML`, and don't when it goes into `textContent`.
+- **Dates and numbers follow the chosen language**, not the browser — use `fmt.*`
+  from the i18n module, never `toLocaleString()` directly.
+- **Shortcut labels are half data.** `{ key }` is ours and gets translated;
+  `{ label }` was typed by the user and never is. Editing a catalog label in the
+  options page deliberately drops the key.
+- Deliberately untranslated: the extension name, the `DebugLevel` record name in
+  the org, and two internal diagnostics kept in English so they stay searchable in
+  bug reports. They are whitelisted in the check script.
+
+Adding a language is one file plus two entries in `LOCALES` and `LOADERS`.
 
 ## Conventions
 

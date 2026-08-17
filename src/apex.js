@@ -7,6 +7,8 @@
  * the run produced and fetch its body.
  */
 
+import { initI18n, applyStaticText, onLocaleChanged, t, fmt } from "./i18n/index.js";
+
 const pageHost = new URLSearchParams(location.search).get("host") || "";
 
 const el = {
@@ -31,7 +33,7 @@ let currentLog = "";
 
 const HISTORY_KEY = "apexHistory";
 const HISTORY_MAX = 20;
-const DEBUG_LEVEL_NAME = "StaraToolbox";
+const DEBUG_LEVEL_NAME = "Orgscope";
 const TRACE_MINUTES = 30;
 
 // ---------------------------------------------------------------------------
@@ -152,7 +154,7 @@ async function ensureDebugLevel(preset) {
 
   const created = await client.post(`/services/data/v${v}/tooling/sobjects/DebugLevel`, {
     DeveloperName: DEBUG_LEVEL_NAME,
-    MasterLabel: "Stara Toolbox",
+    MasterLabel: "Orgscope",
     ...levels,
   });
   return created.id;
@@ -228,18 +230,18 @@ async function run() {
   if (!code || !client) return;
 
   el.run.disabled = true;
-  setResult("busy", "Running…");
+  setResult("busy", t("apex.running"));
 
   try {
     const capture = el.capture.checked;
     if (capture) {
-      setResult("busy", "Preparing debug log…");
+      setResult("busy", t("apex.preparingLog"));
       await ensureTraceFlag(el.level.value);
     }
 
     const previousLogId = capture ? await newestLogId() : null;
 
-    setResult("busy", "Executing…");
+    setResult("busy", t("apex.executing"));
     const v = await client.apiVersion();
     const res = await client.request(
       `/services/data/v${v}/tooling/executeAnonymous/?anonymousBody=${encodeURIComponent(code)}`
@@ -249,22 +251,21 @@ async function run() {
     await saveHistory(code);
 
     if (capture) {
-      el.logMeta.textContent = "Waiting for the debug log…";
+      el.logMeta.textContent = t("apex.waitingLog");
       const log = await waitForNewLog(previousLogId);
       if (!log) {
-        el.logMeta.textContent =
-          "No new debug log appeared. The TraceFlag may not have taken effect yet — try again.";
+        el.logMeta.textContent = t("apex.noNewLog");
         return;
       }
       currentLog = String(await fetchLogBody(log.Id));
       el.logMeta.textContent =
-        `${log.Operation || "Anonymous Apex"} · ${formatBytes(log.LogLength)}` +
-        (log.DurationMilliseconds ? ` · ${log.DurationMilliseconds} ms` : "") +
+        `${log.Operation || t("apex.title")} · ${fmt.bytes(log.LogLength)}` +
+        (log.DurationMilliseconds ? ` · ${fmt.number(log.DurationMilliseconds)} ms` : "") +
         (log.Status && log.Status !== "Success" ? ` · ${log.Status}` : "");
       renderLog();
     }
   } catch (err) {
-    setResult("err", "Request failed", err.message);
+    setResult("err", t("apex.requestFailed"), err.message);
   } finally {
     el.run.disabled = false;
   }
@@ -272,16 +273,16 @@ async function run() {
 
 function renderExecutionResult(res) {
   if (res.compiled === false) {
-    setResult("err", "Compile error",
-      `Line ${res.line}, column ${res.column}\n${res.compileProblem || ""}`);
+    setResult("err", t("apex.compileError"),
+      `${t("apex.compilePosition", { line: res.line, column: res.column })}\n${res.compileProblem || ""}`);
     return;
   }
   if (res.success === false) {
-    setResult("err", "Unhandled exception",
+    setResult("err", t("apex.exception"),
       [res.exceptionMessage, res.exceptionStackTrace].filter(Boolean).join("\n"));
     return;
   }
-  setResult("ok", "Executed successfully");
+  setResult("ok", t("apex.success"));
 }
 
 function setResult(tone, title, detail) {
@@ -297,7 +298,7 @@ function setResult(tone, title, detail) {
 
 function renderLog() {
   if (!currentLog) {
-    el.log.innerHTML = `<span class="empty">Run something to see its debug log here.</span>`;
+    el.log.innerHTML = `<span class="empty">${escapeHtml(t("apex.empty"))}</span>`;
     return;
   }
 
@@ -307,7 +308,7 @@ function renderLog() {
     : lines;
 
   if (shown.length === 0) {
-    el.log.innerHTML = `<span class="empty">No USER_DEBUG lines in this log.</span>`;
+    el.log.innerHTML = `<span class="empty">${escapeHtml(t("apex.noDebugLines"))}</span>`;
     return;
   }
 
@@ -324,12 +325,6 @@ const escapeHtml = v =>
     ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c])
   );
 
-function formatBytes(bytes) {
-  const n = Number(bytes) || 0;
-  if (n >= 1024 ** 2) return `${(n / 1024 ** 2).toFixed(1)} MB`;
-  return `${(n / 1024).toFixed(0)} KB`;
-}
-
 // ---------------------------------------------------------------------------
 // history
 // ---------------------------------------------------------------------------
@@ -344,7 +339,7 @@ async function saveHistory(code) {
 
 function renderHistory(list) {
   el.history.innerHTML =
-    `<option value="">History…</option>` +
+    `<option value="">${escapeHtml(t("apex.history"))}</option>` +
     list.map((h, i) => {
       const preview = h.code.replace(/\s+/g, " ").slice(0, 60);
       return `<option value="${i}">${escapeHtml(preview)}</option>`;
@@ -386,8 +381,8 @@ el.history.addEventListener("change", () => {
 el.copyLog.addEventListener("click", async () => {
   if (!currentLog) return;
   await navigator.clipboard.writeText(currentLog).catch(() => {});
-  el.copyLog.textContent = "Copied";
-  setTimeout(() => { el.copyLog.textContent = "Copy log"; }, 1200);
+  el.copyLog.textContent = t("common.copied");
+  setTimeout(() => { el.copyLog.textContent = t("apex.copyLog"); }, 1200);
 });
 
 el.downloadLog.addEventListener("click", () => {
@@ -405,13 +400,26 @@ el.downloadLog.addEventListener("click", () => {
 // ---------------------------------------------------------------------------
 
 async function init() {
+  await initI18n();
+  applyStaticText();
+  renderLog(); // paints the "run something" placeholder in the active language
   renderHistory((await chrome.storage.local.get(HISTORY_KEY))[HISTORY_KEY] || []);
+
+  // Changing the language elsewhere must not throw away code being written here,
+  // so re-translate in place instead of reloading.
+  onLocaleChanged(async newValue => {
+    const { resolveLocale, activateLocale } = await import("./i18n/index.js");
+    await activateLocale(resolveLocale(newValue || "auto"));
+    applyStaticText();
+    renderHistory((await chrome.storage.local.get(HISTORY_KEY))[HISTORY_KEY] || []);
+    renderLog();
+  });
 
   try {
     session = await bg("getSession", { host: pageHost });
   } catch (err) {
-    el.host.textContent = "not connected";
-    setResult("err", "No Salesforce session", err.message);
+    el.host.textContent = t("common.notConnected");
+    setResult("err", t("apex.noSession"), err.message);
     return;
   }
 
@@ -427,7 +435,7 @@ async function init() {
     // but log capture cannot.
     el.capture.checked = false;
     el.capture.disabled = true;
-    el.logMeta.textContent = `Debug log capture unavailable: ${err.message}`;
+    el.logMeta.textContent = t("apex.captureUnavailable", { error: err.message });
   }
 
   el.run.disabled = false;

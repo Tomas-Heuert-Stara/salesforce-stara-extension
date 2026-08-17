@@ -1,5 +1,27 @@
 # Roadmap
 
+## v0.3.0 — internationalisation and rename
+
+- [x] **Renamed to Orgscope.** No product name ties it to a company any more. The
+      GitHub repo keeps its current name; `src/config.js` points at it, so renaming
+      the repo later is a two-line change there.
+- [x] **i18n runtime** — `src/i18n/`, hand-rolled because `chrome.i18n` follows the
+      browser's UI language and cannot be overridden at runtime.
+- [x] **English, Português (Brasil), Español, Русский**, English as fallback for any
+      missing key. 217 keys per locale.
+- [x] **Language picker** in Options, stored in `chrome.storage.sync`. Defaults to
+      matching the browser.
+- [x] **Dates and numbers follow the chosen language**, not the browser locale.
+- [x] **`tools/check-i18n.js`** — key parity, plural categories per locale, unknown
+      and dead keys, and leftover hard-coded English.
+
+Notes for later:
+
+- Adding a language is one file in `src/i18n/` plus two entries in its `index.js`.
+- Orgs that already ran the Anonymous Apex tab keep a `DebugLevel` record named
+  `StaraToolbox` from before the rename. Harmless — new runs create and use
+  `Orgscope` instead — but the old one can be deleted in Setup if it bothers you.
+
 ## v0.2.1 — fixes from first live run
 
 - [x] Options and Edit-shortcuts buttons did nothing — `chrome.runtime.openOptionsPage()`

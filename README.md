@@ -1,4 +1,4 @@
-# Stara SF Toolbox
+# Orgscope
 
 A Chrome/Edge (Manifest V3) extension that adds a slide-out side panel to any Salesforce
 org you are logged into — deployment status, Apex job KPIs, org limits, debug log
@@ -95,6 +95,18 @@ Id, and the key prefix is resolved against the org's global describe to open the
 
 Ctrl/Cmd/Shift-click any Setup link to open it in a new tab.
 
+## Language
+
+English, Português (Brasil), Español and Русский, picked in Options. The default
+follows your browser and falls back to English. The choice syncs across your
+machines, and dates and numbers follow it too — not the browser locale.
+
+Untranslated text falls back to English rather than showing a blank.
+
+Adding a language is one file in `src/i18n/` plus two entries in its `index.js`.
+Run `node tools/check-i18n.js` afterwards — it verifies key parity, plural
+categories, that every referenced key exists and that nothing is still hard-coded.
+
 ## Options
 
 Toolbar icon → **Options**, or the pencil in the panel's Shortcuts header.
@@ -110,7 +122,7 @@ Opens in its own tab. Write Apex, **Ctrl+Enter** to run.
 
 The Tooling API's `executeAnonymous` does not return a debug log, so to show one the
 runner does what the Developer Console does: ensures a `DebugLevel` named
-`StaraToolbox` and a `TraceFlag` on your user exist (30 minutes, three presets — Debug,
+`Orgscope` and a `TraceFlag` on your user exist (30 minutes, three presets — Debug,
 Finest, Errors only), runs the code, then finds the `ApexLog` the run produced and
 fetches its body.
 
@@ -181,5 +193,7 @@ src/panel.*         the side panel UI and its Salesforce API calls
 src/options.*       shortcut editor
 src/apex.*          Anonymous Apex runner and log viewer
 src/page.css        shared styling for the full-tab pages
+src/i18n/           the i18n runtime and one module per language
+tools/check-i18n.js key parity, plural and coverage check
 icons/
 ```

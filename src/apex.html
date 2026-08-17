@@ -2,31 +2,32 @@
 <html lang="en">
 <head>
   <meta charset="utf-8">
-  <title>Anonymous Apex — Stara SF Toolbox</title>
+  <title>Anonymous Apex — Orgscope</title>
   <link rel="stylesheet" href="page.css">
 </head>
 <body class="apex-body">
   <header class="apex-hd">
     <div class="grow">
-      <div class="title">Anonymous Apex</div>
-      <div class="host" id="host">connecting…</div>
+      <div class="title" data-i18n="apex.title">Anonymous Apex</div>
+      <div class="host" id="host" data-i18n="common.connecting">connecting…</div>
     </div>
 
-    <label title="Sets a TraceFlag for you so the run produces a debug log">
-      <input type="checkbox" id="capture" checked> Capture debug log
+    <label data-i18n-title="apex.captureTitle">
+      <input type="checkbox" id="capture" checked>
+      <span data-i18n="apex.capture">Capture debug log</span>
     </label>
 
-    <select id="level" title="Debug level applied to the TraceFlag">
-      <option value="debug">Debug</option>
-      <option value="finest">Finest</option>
-      <option value="error">Errors only</option>
+    <select id="level" data-i18n-title="apex.levelTitle">
+      <option value="debug" data-i18n="apex.level.debug">Debug</option>
+      <option value="finest" data-i18n="apex.level.finest">Finest</option>
+      <option value="error" data-i18n="apex.level.error">Errors only</option>
     </select>
 
-    <select id="history" title="Recent snippets">
-      <option value="">History…</option>
+    <select id="history" data-i18n-title="apex.historyTitle">
+      <option value="" data-i18n="apex.history">History…</option>
     </select>
 
-    <button class="btn primary" id="run" disabled>Run (Ctrl+Enter)</button>
+    <button class="btn primary" id="run" data-i18n="apex.run" disabled>Run (Ctrl+Enter)</button>
   </header>
 
   <div class="apex-editor">
@@ -36,13 +37,16 @@
   <div class="apex-result" id="result" hidden></div>
 
   <div class="apex-logbar">
-    <span class="grow" id="logMeta">No log yet.</span>
-    <label><input type="checkbox" id="debugOnly"> USER_DEBUG only</label>
-    <button class="btn small" id="copyLog">Copy log</button>
-    <button class="btn small" id="downloadLog">Download</button>
+    <span class="grow" id="logMeta" data-i18n="apex.noLog">No log yet.</span>
+    <label>
+      <input type="checkbox" id="debugOnly">
+      <span data-i18n="apex.debugOnly">USER_DEBUG only</span>
+    </label>
+    <button class="btn small" id="copyLog" data-i18n="apex.copyLog">Copy log</button>
+    <button class="btn small" id="downloadLog" data-i18n="apex.download">Download</button>
   </div>
 
-  <div class="apex-log" id="log"><span class="empty">Run something to see its debug log here.</span></div>
+  <div class="apex-log" id="log"></div>
 
   <script src="apex.js" type="module"></script>
 </body>

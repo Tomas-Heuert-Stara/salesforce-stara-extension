@@ -2,18 +2,18 @@
 <html lang="en">
 <head>
   <meta charset="utf-8">
-  <title>Stara SF Toolbox</title>
+  <title>Orgscope</title>
   <link rel="stylesheet" href="panel.css">
 </head>
 <body>
   <header class="hd">
     <div class="hd-org">
-      <span class="hd-title" id="orgName">Stara SF Toolbox</span>
-      <span class="hd-host" id="orgHost">connecting…</span>
+      <span class="hd-title" id="orgName">Orgscope</span>
+      <span class="hd-host" id="orgHost" data-i18n="common.connecting">connecting…</span>
     </div>
     <div class="hd-actions">
       <span class="env" id="envBadge" hidden></span>
-      <button class="icon-btn" id="optionsBtn" title="Options">
+      <button class="icon-btn" id="optionsBtn" data-i18n-title="common.options" title="Options">
         <!-- Sliders, not a gear or a sun: unambiguous at 15px. -->
         <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round">
           <path d="M2.4 4.6h11.2M2.4 11.4h11.2"/>
@@ -21,12 +21,12 @@
           <circle cx="10.4" cy="11.4" r="1.9" fill="var(--bg-alt)"/>
         </svg>
       </button>
-      <button class="icon-btn" id="refreshAll" title="Refresh everything">
+      <button class="icon-btn" id="refreshAll" data-i18n-title="common.refreshAll" title="Refresh everything">
         <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round">
           <path d="M13.5 8a5.5 5.5 0 1 1-1.7-3.9"/><path d="M13.8 2.6v2.6h-2.6"/>
         </svg>
       </button>
-      <button class="icon-btn" id="closeBtn" title="Close panel">
+      <button class="icon-btn" id="closeBtn" data-i18n-title="common.close" title="Close panel">
         <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round">
           <path d="M4 4l8 8M12 4l-8 8"/>
         </svg>
@@ -41,10 +41,11 @@
     <!-- deployments ---------------------------------------------------- -->
     <section class="sec">
       <h2 class="sec-h">
-        <span>Deployment status</span>
+        <span data-i18n="deploy.section">Deployment status</span>
         <span class="sec-tools">
-          <a class="sec-link" href="#" data-setup="/lightning/setup/DeployStatus/home">Setup</a>
-          <button class="mini-btn" id="refreshDeploy" title="Refresh deployment status">
+          <a class="sec-link" href="#" data-setup="/lightning/setup/DeployStatus/home"
+             data-i18n="common.setup">Setup</a>
+          <button class="mini-btn" id="refreshDeploy" data-i18n-title="deploy.refresh">
             <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round">
               <path d="M13.5 8a5.5 5.5 0 1 1-1.7-3.9"/><path d="M13.8 2.6v2.6h-2.6"/>
             </svg>
@@ -57,9 +58,9 @@
     <!-- apex jobs ------------------------------------------------------ -->
     <section class="sec">
       <h2 class="sec-h">
-        <span>Apex jobs</span>
+        <span data-i18n="jobs.section">Apex jobs</span>
         <span class="sec-tools">
-          <button class="mini-btn" id="refreshJobs" title="Refresh Apex jobs">
+          <button class="mini-btn" id="refreshJobs" data-i18n-title="jobs.refresh">
             <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round">
               <path d="M13.5 8a5.5 5.5 0 1 1-1.7-3.9"/><path d="M13.8 2.6v2.6h-2.6"/>
             </svg>
@@ -68,13 +69,13 @@
       </h2>
       <div class="kpis" id="kpis">
         <button class="kpi" data-setup="/lightning/setup/ScheduledJobs/home" data-kpi="scheduled">
-          <span class="kpi-n">–</span><span class="kpi-l">Scheduled</span>
+          <span class="kpi-n">–</span><span class="kpi-l" data-i18n="jobs.scheduled">Scheduled</span>
         </button>
         <button class="kpi" data-setup="/lightning/setup/AsyncApexJobs/home" data-kpi="running">
-          <span class="kpi-n">–</span><span class="kpi-l">Running</span>
+          <span class="kpi-n">–</span><span class="kpi-l" data-i18n="jobs.running">Running</span>
         </button>
         <button class="kpi" data-setup="/lightning/setup/ApexFlexQueue/home" data-kpi="flex">
-          <span class="kpi-n">–</span><span class="kpi-l">Flex queue</span>
+          <span class="kpi-n">–</span><span class="kpi-l" data-i18n="jobs.flex">Flex queue</span>
         </button>
       </div>
       <p class="kpi-err" id="kpiErr" hidden></p>
@@ -87,9 +88,9 @@
     <section class="sec">
       <details class="sec-collapse" data-key="org-limits" open>
         <summary class="sec-h">
-          <span>Org limits</span>
+          <span data-i18n="limits.section">Org limits</span>
           <span class="sec-tools">
-            <button class="mini-btn" id="refreshOrg" title="Refresh limits and coverage">
+            <button class="mini-btn" id="refreshOrg" data-i18n-title="limits.refresh">
               <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round">
                 <path d="M13.5 8a5.5 5.5 0 1 1-1.7-3.9"/><path d="M13.8 2.6v2.6h-2.6"/>
               </svg>
@@ -104,9 +105,10 @@
     <!-- debug logs ----------------------------------------------------- -->
     <section class="sec">
       <h2 class="sec-h">
-        <span>Debug logs</span>
+        <span data-i18n="logs.section">Debug logs</span>
         <span class="sec-tools">
-          <a class="sec-link" href="#" data-setup="/lightning/setup/ApexDebugLogs/home">Setup</a>
+          <a class="sec-link" href="#" data-setup="/lightning/setup/ApexDebugLogs/home"
+             data-i18n="common.setup">Setup</a>
         </span>
       </h2>
       <div id="logs"></div>
@@ -115,9 +117,9 @@
     <!-- shortcuts ------------------------------------------------------ -->
     <section class="sec">
       <h2 class="sec-h">
-        <span>Shortcuts</span>
+        <span data-i18n="shortcuts.section">Shortcuts</span>
         <span class="sec-tools">
-          <button class="mini-btn" id="editShortcuts" title="Edit shortcuts">
+          <button class="mini-btn" id="editShortcuts" data-i18n-title="shortcuts.edit">
             <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linejoin="round">
               <path d="M11.2 2.4 13.6 4.8 5.6 12.8 2.4 13.6l.8-3.2z"/>
             </svg>
@@ -127,7 +129,7 @@
 
       <div class="jump">
         <input id="jumpInput" type="text" spellcheck="false" autocomplete="off"
-               placeholder="Paste a record Id to open it…" maxlength="18">
+               data-i18n-placeholder="jump.placeholder" maxlength="18">
         <span class="jump-hint" id="jumpHint"></span>
       </div>
 

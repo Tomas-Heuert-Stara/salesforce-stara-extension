@@ -10,7 +10,8 @@
  *   org     - identity and coverage; boot and on demand only
  */
 
-import { loadShortcuts, SHORTCUTS_KEY } from "./shortcuts.js";
+import { loadShortcuts, shortcutLabel, SHORTCUTS_KEY } from "./shortcuts.js";
+import { initI18n, applyStaticText, onLocaleChanged, t, fmt } from "./i18n/index.js";
 
 const POLL_DEPLOY_ACTIVE_MS = 4000;
 const POLL_DEPLOY_IDLE_MS = 30000;
@@ -54,12 +55,18 @@ let visible = true;
 
 const deployDetails = new Map(); // deploy id -> details payload (or an Error)
 
+/** Translate, but keep the raw Salesforce value when we have no wording for it. */
+const tOr = (key, fallback) => {
+  const value = t(key);
+  return value === key ? fallback : value;
+};
+
 // ---------------------------------------------------------------------------
 // plumbing
 // ---------------------------------------------------------------------------
 
 function toHost(msg) {
-  parent.postMessage({ source: "stara-sfx-panel", ...msg }, "*");
+  parent.postMessage({ source: "orgscope-panel", ...msg }, "*");
 }
 
 function bg(type, payload = {}) {
@@ -87,12 +94,10 @@ function reportBgError(err) {
     return;
   }
   showBanner(`
-    <div class="banner-title">Extension needs a reload</div>
-    <div class="banner-body">
-      Its background worker is still running older code than this panel.
-    </div>
+    <div class="banner-title">${esc(t("stale.title"))}</div>
+    <div class="banner-body">${esc(t("stale.body"))}</div>
     <div class="banner-actions">
-      <button class="banner-btn" data-action="reload-ext">Reload extension</button>
+      <button class="banner-btn" data-action="reload-ext">${esc(t("stale.reload"))}</button>
     </div>`);
 }
 
@@ -329,7 +334,7 @@ async function refreshDeploys() {
     deployStamp = new Date();
   } catch (err) {
     if (isAuthError(err)) {
-      showBanner("Salesforce session expired. Reload the page and try again.");
+      showBanner(esc(t("session.expired")));
     } else {
       await renderDeployments({ status: "rejected", reason: err });
       deployStamp = new Date();
@@ -360,7 +365,7 @@ async function refreshJobs({ retry = true } = {}) {
     ]);
 
     if (r.some(x => !x.ok && isAuthError(x.error))) {
-      showBanner("Salesforce session expired. Reload the page and try again.");
+      showBanner(esc(t("session.expired")));
       return;
     }
 
@@ -381,7 +386,7 @@ async function refreshJobs({ retry = true } = {}) {
     jobsStamp = new Date();
   } catch (err) {
     if (isAuthError(err)) {
-      showBanner("Salesforce session expired. Reload the page and try again.");
+      showBanner(esc(t("session.expired")));
     } else {
       renderKpis(null, err);
       jobsStamp = new Date();
@@ -453,22 +458,26 @@ function scheduleLimits() {
 
 function updatePollNote() {
   if (!visible) {
-    el.pollNote.textContent = "paused";
-    el.pollNote.title = "Polling stops while the panel is closed or the tab is hidden.";
+    el.pollNote.textContent = t("footer.paused");
+    el.pollNote.title = t("footer.pausedTooltip");
     return;
   }
   const active = lastDeploys.some(isActive);
-  el.pollNote.textContent = active ? "live" : "auto";
-  el.pollNote.title = `deploys ${active ? "4s" : "30s"} · jobs 30s · limits 60s`;
+  el.pollNote.textContent = active ? t("footer.live") : t("footer.auto");
+  el.pollNote.title = t("footer.cadence", {
+    deploys: active ? "4s" : "30s", jobs: "30s", limits: "60s",
+  });
 }
 
 function stampFooter() {
   const stamps = [deployStamp, jobsStamp, limitsStamp].filter(Boolean);
   if (stamps.length === 0) return;
   const latest = new Date(Math.max(...stamps.map(d => d.getTime())));
-  const t = d => (d ? d.toLocaleTimeString() : "—");
-  el.updated.textContent = `updated ${t(latest)}`;
-  el.updated.title = `deploys ${t(deployStamp)} · jobs ${t(jobsStamp)} · limits ${t(limitsStamp)}`;
+  const at = d => (d ? fmt.time(d) : "—");
+  el.updated.textContent = t("footer.updated", { time: fmt.time(latest) });
+  el.updated.title = t("footer.cadence", {
+    deploys: at(deployStamp), jobs: at(jobsStamp), limits: at(limitsStamp),
+  });
 }
 
 // ---------------------------------------------------------------------------
@@ -477,36 +486,38 @@ function stampFooter() {
 
 function renderOrgIdentity(org) {
   if (!org) return;
-  el.orgName.textContent = org.Name || "Stara SF Toolbox";
+  el.orgName.textContent = org.Name || "Orgscope";
   el.orgName.title = `${org.Name || ""} · ${org.OrganizationType || ""} · ${org.InstanceName || ""}` +
     ` · v${chrome.runtime.getManifest().version}`;
-  el.envBadge.textContent = org.IsSandbox ? "Sandbox" : "Prod";
+  el.envBadge.textContent = org.IsSandbox ? t("env.sandbox") : t("env.prod");
   el.envBadge.className = `env ${org.IsSandbox ? "sandbox" : "prod"}`;
   el.envBadge.hidden = false;
 }
 
 // Only the limits worth watching day to day; /limits returns dozens.
 const WATCHED_LIMITS = [
-  ["DailyApiRequests", "Daily API requests", "n"],
-  ["DailyAsyncApexExecutions", "Daily async Apex", "n"],
-  ["DataStorageMB", "Data storage", "mb"],
-  ["FileStorageMB", "File storage", "mb"],
-  ["SingleEmail", "Single email", "n"],
-  ["MassEmail", "Mass email", "n"],
-  ["HourlyTimeBasedWorkflow", "Hourly time-based WF", "n"],
+  ["DailyApiRequests", "n"],
+  ["DailyAsyncApexExecutions", "n"],
+  ["DataStorageMB", "mb"],
+  ["FileStorageMB", "mb"],
+  ["SingleEmail", "n"],
+  ["MassEmail", "n"],
+  ["HourlyTimeBasedWorkflow", "n"],
 ];
 
 function renderLimits(result) {
   if (!result.ok) {
-    el.limits.innerHTML = `<p class="empty">Limits unavailable: ${esc(result.error.message)}</p>`;
+    el.limits.innerHTML =
+      `<p class="empty">${esc(t("limits.unavailable", { error: result.error.message }))}</p>`;
     return;
   }
 
   const data = result.value || {};
-  const rows = WATCHED_LIMITS.map(([key, label, unit]) => {
+  const rows = WATCHED_LIMITS.map(([key, unit]) => {
     const lim = data[key];
     if (!lim || typeof lim.Max !== "number") return "";
 
+    const label = tOr(`limits.${key}`, key);
     const max = lim.Max;
     // Remaining goes negative once a limit is blown through; used must follow it
     // past 100% rather than being clamped, or the row hides the actual problem.
@@ -514,20 +525,22 @@ function renderLimits(result) {
     const pct = max > 0 ? Math.round((used / max) * 100) : 0;
     const width = Math.min(100, Math.max(0, pct));
     const tone = pct > 100 ? "over" : pct >= 90 ? "bad" : pct >= 75 ? "warn" : "";
-    const fmt = unit === "mb" ? formatMb : formatNumber;
-    const over = pct > 100 ? ` · ${fmt(used - max)} over` : "";
+    const format = unit === "mb" ? v => fmt.megabytes(v) : v => fmt.number(v);
 
-    return `<div class="lim ${tone}" title="${esc(label)}: ${fmt(used)} of ${fmt(max)}${over}">
+    const tip = t("limits.tooltip", { label, used: format(used), max: format(max) }) +
+      (pct > 100 ? ` · ${t("limits.over", { amount: format(used - max) })}` : "");
+
+    return `<div class="lim ${tone}" title="${esc(tip)}">
       <i style="width:${width}%"></i>
       <span class="lim-l">${esc(label)}</span>
-      <span class="lim-v">${fmt(used)} / ${fmt(max)}</span>
+      <span class="lim-v">${esc(format(used))} / ${esc(format(max))}</span>
       <span class="lim-p">${pct}%</span>
     </div>`;
   }).filter(Boolean);
 
   el.limits.innerHTML = rows.length
     ? `<div class="lims">${rows.join("")}</div>`
-    : `<p class="empty">No matching limits returned by this org.</p>`;
+    : `<p class="empty">${esc(t("limits.none"))}</p>`;
 }
 
 function renderCoverage(settled) {
@@ -543,7 +556,7 @@ function renderCoverage(settled) {
   // 75% is the deployment gate, so that is the line that matters.
   const tone = pct >= 75 ? "ok" : "bad";
   el.coverage.innerHTML = `<div class="cov ${tone}">
-    <span>Apex coverage</span>
+    <span>${esc(t("coverage.label"))}</span>
     <span class="bar"><i class="${tone}" style="width:${Math.min(100, pct)}%"></i></span>
     <span class="cov-n">${pct}%</span>
   </div>`;
@@ -557,7 +570,10 @@ function renderKpis(results, fatal) {
   const tiles = el.kpis.querySelectorAll(".kpi");
 
   if (fatal) {
-    tiles.forEach(t => { t.querySelector(".kpi-n").textContent = "!"; t.classList.remove("hot"); });
+    tiles.forEach(tile => {
+      tile.querySelector(".kpi-n").textContent = "!";
+      tile.classList.remove("hot");
+    });
     el.kpiErr.textContent = fatal.message;
     el.kpiErr.hidden = false;
     return;
@@ -569,7 +585,7 @@ function renderKpis(results, fatal) {
     const n = tile.querySelector(".kpi-n");
     if (r.ok) {
       const count = r.value.totalSize ?? 0;
-      n.textContent = count;
+      n.textContent = fmt.number(count);
       // Running and flex-queue tiles read as "attention" when non-zero.
       tile.classList.toggle("hot", count > 0 && i > 0);
     } else {
@@ -584,7 +600,7 @@ function renderKpis(results, fatal) {
 }
 
 // ---------------------------------------------------------------------------
-// rendering: running jobs
+// progress sampling
 // ---------------------------------------------------------------------------
 
 /**
@@ -643,10 +659,14 @@ function estimateFinish(map, { key, done, total, startedAt, now }) {
   return { remainingMs, finishAt: new Date(now + remainingMs), measured };
 }
 
+// ---------------------------------------------------------------------------
+// rendering: running jobs
+// ---------------------------------------------------------------------------
+
 function renderRunningJobs(detail, countResult) {
   if (!detail.ok) {
     el.runningJobs.innerHTML =
-      `<p class="jobs-more">Job detail unavailable: ${esc(detail.error.message)}</p>`;
+      `<p class="jobs-more">${esc(t("jobs.detailUnavailable", { error: detail.error.message }))}</p>`;
     return;
   }
 
@@ -664,11 +684,11 @@ function renderRunningJobs(detail, countResult) {
 
   el.runningJobs.innerHTML =
     `<div class="jobs">${jobs.map(j => jobRow(j, now)).join("")}</div>` +
-    (hidden > 0 ? `<p class="jobs-more">+ ${hidden} more not shown</p>` : "");
+    (hidden > 0 ? `<p class="jobs-more">${esc(t("jobs.more", { count: hidden }))}</p>` : "");
 }
 
 function jobRow(job, now) {
-  const name = job.ApexClass?.Name || "(class unavailable)";
+  const name = job.ApexClass?.Name || t("jobs.classUnavailable");
   const method = job.MethodName ? `<span class="method">.${esc(job.MethodName)}</span>` : "";
   const who = job.CreatedBy?.Name;
 
@@ -687,23 +707,22 @@ function jobRow(job, now) {
     `<span class="job-type">${esc(prettyJobType(job.JobType))}</span>`,
     `</div>`,
     `<div class="job-meta">`,
-    who ? `<span>by ${esc(who)}</span>` : "",
-    `<span>started ${esc(relative(job.CreatedDate))}</span>`,
-    job.Status === "Preparing" ? `<span>preparing…</span>` : "",
-    errors > 0 ? `<span class="job-errs">${errors} error${errors > 1 ? "s" : ""}</span>` : "",
+    who ? `<span>${esc(t("jobs.by", { name: who }))}</span>` : "",
+    `<span>${esc(t("jobs.started", { when: fmt.relative(job.CreatedDate) }))}</span>`,
+    job.Status === "Preparing" ? `<span>${esc(t("jobs.preparing"))}</span>` : "",
+    errors > 0 ? `<span class="job-errs">${esc(t("jobs.errors", { count: errors }))}</span>` : "",
     `</div>`,
   ];
 
-  if (total > 0) parts.push(progressBar("Batches", done, total, errors));
+  if (total > 0) parts.push(progressBar(t("jobs.batches"), done, total, errors));
 
   if (eta) {
-    const basis = eta.measured
-      ? "measured from observed throughput"
-      : "estimated from average since the job was queued";
+    const basis = eta.measured ? t("jobs.etaMeasured") : t("jobs.etaFallback");
     parts.push(
-      `<p class="job-eta" title="${esc(basis)}">~${esc(duration(eta.remainingMs))} left ` +
-      `<span class="soft">· done around ${esc(eta.finishAt.toLocaleTimeString())}` +
-      `${eta.measured ? "" : " (rough)"}</span></p>`
+      `<p class="job-eta" title="${esc(basis)}">` +
+      `${esc(t("jobs.etaLeft", { duration: fmt.duration(eta.remainingMs) }))} ` +
+      `<span class="soft">· ${esc(t("jobs.doneAround", { time: fmt.time(eta.finishAt) }))}` +
+      `${eta.measured ? "" : ` ${esc(t("jobs.rough"))}`}</span></p>`
     );
   }
 
@@ -713,18 +732,7 @@ function jobRow(job, now) {
   return parts.join("");
 }
 
-function prettyJobType(type) {
-  switch (type) {
-    case "BatchApex": return "Batch";
-    case "BatchApexWorker": return "Batch chunk";
-    case "ScheduledApex": return "Scheduled";
-    case "TestRequest":
-    case "TestWorker": return "Test";
-    case "SharingRecalculation": return "Sharing";
-    case "ApexToken": return "Token";
-    default: return type || "Apex";
-  }
-}
+const prettyJobType = type => tOr(`jobType.${type}`, type || t("jobType.default"));
 
 // ---------------------------------------------------------------------------
 // rendering: failed jobs
@@ -743,19 +751,22 @@ function renderFailedJobs(result) {
 
   el.failedJobs.innerHTML = `
     <details class="group bad" ${detailsAttr("failed-jobs")}>
-      <summary>Failed in the last 24h <span class="count">${jobs.length}</span></summary>
+      <summary>${esc(t("jobs.failedRecent"))} <span class="count">${fmt.number(jobs.length)}</span></summary>
       ${jobs.map(j => `
         <div class="cron">
           <div class="cron-top">
-            <span class="cron-name">${esc(j.ApexClass?.Name || "(class unavailable)")}${
+            <span class="cron-name">${esc(j.ApexClass?.Name || t("jobs.classUnavailable"))}${
               j.MethodName ? `.${esc(j.MethodName)}` : ""}</span>
             <span class="cron-state bad">${esc(prettyJobType(j.JobType))}</span>
           </div>
           <div class="cron-meta">
-            <span>${esc(relative(j.CompletedDate))}</span>
-            ${Number(j.NumberOfErrors) > 0 ? `<span>${j.NumberOfErrors} errors</span>` : ""}
+            <span>${esc(fmt.relative(j.CompletedDate))}</span>
+            ${Number(j.NumberOfErrors) > 0
+              ? `<span>${esc(t("jobs.errors", { count: Number(j.NumberOfErrors) }))}</span>` : ""}
             ${Number(j.TotalJobItems) > 0
-              ? `<span>${j.JobItemsProcessed}/${j.TotalJobItems} batches</span>` : ""}
+              ? `<span>${esc(t("jobs.batchesOf", {
+                  done: fmt.number(j.JobItemsProcessed), total: fmt.number(j.TotalJobItems),
+                }))}</span>` : ""}
           </div>
           ${j.ExtendedStatus ? `<div class="cron-meta">${esc(j.ExtendedStatus)}</div>` : ""}
         </div>`).join("")}
@@ -786,11 +797,13 @@ function renderScheduledJobs(result, countResult) {
   el.scheduledJobs.innerHTML = `
     <details class="group ${unhealthy ? "bad" : ""}" ${detailsAttr("scheduled-jobs")}>
       <summary>
-        Scheduled jobs <span class="count">${total}</span>
-        ${unhealthy ? `<span class="count">${unhealthy} need attention</span>` : ""}
+        ${esc(t("jobs.scheduledList"))} <span class="count">${fmt.number(total)}</span>
+        ${unhealthy
+          ? `<span class="count">${esc(t("jobs.needAttention", { count: unhealthy }))}</span>` : ""}
       </summary>
       ${rows.map(cronRow).join("")}
-      ${total > rows.length ? `<p class="jobs-more">+ ${total - rows.length} more not shown</p>` : ""}
+      ${total > rows.length
+        ? `<p class="jobs-more">${esc(t("jobs.more", { count: total - rows.length }))}</p>` : ""}
     </details>`;
 }
 
@@ -799,13 +812,13 @@ function cronRow(c) {
   const tone = BAD_CRON_STATES.has(state) ? (state === "ERROR" ? "bad" : "hold") : "";
   return `<div class="cron">
     <div class="cron-top">
-      <span class="cron-name">${esc(c.CronJobDetail?.Name || "(unnamed)")}</span>
-      <span class="cron-state ${tone}">${esc(state.replace(/_/g, " "))}</span>
+      <span class="cron-name">${esc(c.CronJobDetail?.Name || t("jobs.unnamed"))}</span>
+      <span class="cron-state ${tone}">${esc(tOr(`cron.${state}`, state.replace(/_/g, " ")))}</span>
     </div>
     <div class="cron-meta">
-      <span>next ${esc(c.NextFireTime ? absoluteShort(c.NextFireTime) : "—")}</span>
-      <span>last ${esc(c.PreviousFireTime ? relative(c.PreviousFireTime) : "never")}</span>
-      <span>${c.TimesTriggered ?? 0} runs</span>
+      <span>${esc(t("jobs.next", { when: c.NextFireTime ? fmt.absoluteShort(c.NextFireTime) : "—" }))}</span>
+      <span>${esc(t("jobs.last", { when: c.PreviousFireTime ? fmt.relative(c.PreviousFireTime) : t("common.never") }))}</span>
+      <span>${esc(t("jobs.runs", { count: Number(c.TimesTriggered) || 0 }))}</span>
       ${c.CronExpression ? `<span><code>${esc(c.CronExpression)}</code></span>` : ""}
     </div>
   </div>`;
@@ -824,19 +837,21 @@ let purgeMessage = "";
 
 function renderLogs(countResult, sizeResult) {
   if (!countResult.ok) {
-    el.logs.innerHTML = `<p class="empty">Debug logs unavailable: ${esc(countResult.error.message)}</p>`;
+    el.logs.innerHTML =
+      `<p class="empty">${esc(t("logs.unavailable", { error: countResult.error.message }))}</p>`;
     return;
   }
 
   logCount = countResult.value.totalSize ?? 0;
   // SUM(LogLength) is not supported everywhere; the count alone is still useful.
   const bytes = sizeResult.ok ? sizeResult.value.records?.[0]?.total : null;
-  const size = typeof bytes === "number" ? ` <span class="sub">· ${formatBytes(bytes)}</span>` : "";
+  const size = typeof bytes === "number" ? ` <span class="sub">· ${esc(fmt.bytes(bytes))}</span>` : "";
 
   el.logs.innerHTML = `
     <div class="logline">
-      <span class="grow"><b>${formatNumber(logCount)}</b> log${logCount === 1 ? "" : "s"}${size}</span>
-      <button class="danger-btn" data-action="purge-logs" ${logCount ? "" : "disabled"}>Delete all</button>
+      <span class="grow"><b>${esc(t("logs.count", { count: logCount }))}</b>${size}</span>
+      <button class="danger-btn" data-action="purge-logs" ${logCount ? "" : "disabled"}
+        >${esc(t("logs.deleteAll"))}</button>
     </div>
     <div class="log-progress" id="logProgress" ${purgeMessage ? "" : "hidden"}>${esc(purgeMessage)}</div>`;
 
@@ -851,12 +866,12 @@ function onPurgeClick() {
   if (!purgeArmed) {
     purgeArmed = true;
     btn.classList.add("confirm");
-    btn.textContent = `Delete ${formatNumber(logCount)}? Click again`;
+    btn.textContent = t("logs.confirm", { count: logCount });
     clearTimeout(purgeTimer);
     purgeTimer = setTimeout(() => {
       purgeArmed = false;
       btn.classList.remove("confirm");
-      btn.textContent = "Delete all";
+      btn.textContent = t("logs.deleteAll");
     }, 5000);
     return;
   }
@@ -872,23 +887,24 @@ async function runPurge(btn) {
   purgeMessage = "";
   btn.disabled = true;
   btn.classList.remove("confirm");
-  btn.textContent = "Deleting…";
+  btn.textContent = t("logs.deleting");
   progress.hidden = false;
-  progress.textContent = "Starting…";
+  progress.textContent = t("logs.starting");
 
   try {
     const { deleted, failed } = await purgeApexLogs((done, bad) => {
-      progress.textContent = `Deleted ${formatNumber(done)} of ${formatNumber(total)}` +
-        (bad ? ` · ${bad} refused` : "");
+      progress.textContent =
+        t("logs.progress", { done: fmt.number(done), total: fmt.number(total) }) +
+        (bad ? ` · ${t("logs.refused", { count: bad })}` : "");
     });
-    purgeMessage = `Deleted ${formatNumber(deleted)} log${deleted === 1 ? "" : "s"}` +
-      (failed ? `, ${formatNumber(failed)} could not be deleted` : "") + ".";
+    purgeMessage = t("logs.done", { count: deleted }) +
+      (failed ? ` ${t("logs.someFailed", { count: failed })}` : "");
   } catch (err) {
-    purgeMessage = `Failed: ${err.message}`;
+    purgeMessage = t("logs.failed", { error: err.message });
   } finally {
     progress.textContent = purgeMessage;
     btn.disabled = false;
-    btn.textContent = "Delete all";
+    btn.textContent = t("logs.deleteAll");
     await refreshJobs(); // re-renders with the new count, keeping purgeMessage
   }
 }
@@ -954,7 +970,8 @@ async function deleteRecords(ids, v) {
 async function renderDeployments(settled) {
   if (settled.status === "rejected") {
     lastDeploys = [];
-    el.deploy.innerHTML = `<p class="empty">Could not read deployments: ${esc(settled.reason.message)}</p>`;
+    el.deploy.innerHTML =
+      `<p class="empty">${esc(t("deploy.readError", { error: settled.reason.message }))}</p>`;
     return;
   }
 
@@ -965,7 +982,7 @@ async function renderDeployments(settled) {
   );
 
   if (lastDeploys.length === 0) {
-    el.deploy.innerHTML = `<p class="empty">No deployments recorded in this org.</p>`;
+    el.deploy.innerHTML = `<p class="empty">${esc(t("deploy.none"))}</p>`;
     return;
   }
 
@@ -984,37 +1001,37 @@ async function renderDeployments(settled) {
     deployCard(featured, details) +
     (rest.length
       ? `<details class="recent" ${detailsAttr("recent-deploys")}>
-           <summary>${rest.length} earlier deployment${rest.length > 1 ? "s" : ""}</summary>
+           <summary>${esc(t("deploy.earlier", { count: rest.length }))}</summary>
            ${rest.map(recentRow).join("")}
          </details>`
       : "");
 }
 
 function deployCard(d, details) {
-  const s = statusLook(d.Status);
-  const kind = d.CheckOnly ? "Validation" : "Deployment";
+  const look = statusLook(d.Status);
+  const kind = d.CheckOnly ? t("deploy.validation") : t("deploy.deployment");
   const who = d.CreatedBy?.Name ? ` · ${esc(d.CreatedBy.Name)}` : "";
   const active = isActive(d);
 
   const parts = [
     `<div class="card ${active ? "active" : ""}">`,
     `<div class="card-top">`,
-    `<span class="pill ${s.tone}">${esc(s.label)}</span>`,
-    `<span style="font-weight:600">${kind}</span>`,
+    `<span class="pill ${look.tone}">${esc(look.label)}</span>`,
+    `<span style="font-weight:600">${esc(kind)}</span>`,
     `<span class="tagline">${esc(timeSummary(d))}</span>`,
     `</div>`,
     `<div class="card-meta">`,
     `<span>${esc(shortId(d.Id))}${who}</span>`,
-    d.TestLevel ? `<span>tests: <b>${esc(d.TestLevel)}</b></span>` : "",
+    d.TestLevel ? `<span>${esc(t("deploy.testLevel", { level: d.TestLevel }))}</span>` : "",
     `</div>`,
   ];
 
   if (d.NumberComponentsTotal > 0) {
-    parts.push(progressBar("Components", d.NumberComponentsDeployed,
+    parts.push(progressBar(t("deploy.components"), d.NumberComponentsDeployed,
       d.NumberComponentsTotal, d.NumberComponentErrors));
   }
   if (d.NumberTestsTotal > 0) {
-    parts.push(progressBar("Tests", d.NumberTestsCompleted,
+    parts.push(progressBar(t("deploy.tests"), d.NumberTestsCompleted,
       d.NumberTestsTotal, d.NumberTestErrors));
   }
 
@@ -1032,18 +1049,18 @@ function deployCard(d, details) {
   if (failures.length) {
     parts.push(
       `<details class="errs" ${detailsAttr(`failures:${d.Id}`, true)}>`,
-      `<summary>${failures.length} failure${failures.length > 1 ? "s" : ""}</summary>`,
+      `<summary>${esc(t("deploy.failures", { count: failures.length }))}</summary>`,
       failures.map(f => `<div class="err-item"><b>${esc(f.title)}</b><span>${esc(f.body)}</span></div>`).join(""),
       `</details>`
     );
   } else if (details instanceof Error) {
-    parts.push(`<p class="state-detail">Failure details unavailable: ${esc(details.message)}</p>`);
+    parts.push(`<p class="state-detail">${esc(t("deploy.detailsUnavailable", { error: details.message }))}</p>`);
   }
 
   parts.push(`<div class="card-actions">
-    <button class="chip" data-deploy-setup="${esc(d.Id)}">Open in Setup</button>
-    <button class="chip" data-copy="${esc(d.Id)}">Copy Id</button>
-    <button class="chip" data-copy="${esc(sfCommand(d.Id))}">Copy sf command</button>
+    <button class="chip" data-deploy-setup="${esc(d.Id)}">${esc(t("deploy.openSetup"))}</button>
+    <button class="chip" data-copy="${esc(d.Id)}">${esc(t("deploy.copyId"))}</button>
+    <button class="chip" data-copy="${esc(sfCommand(d.Id))}">${esc(t("deploy.copySf"))}</button>
   </div>`);
 
   parts.push(`</div>`);
@@ -1051,39 +1068,6 @@ function deployCard(d, details) {
 }
 
 const sfCommand = id => `sf project deploy report --job-id ${id}`;
-
-const ROW_ICONS = {
-  setup: `<svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M6.4 3.2h6.4v6.4"/><path d="M12.8 3.2 6 10M9.6 12.8H3.2V6.4"/></svg>`,
-  copy: `<svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linejoin="round"><rect x="5.6" y="5.6" width="8.2" height="8.2" rx="1.2"/><path d="M10.6 5.6v-2a1.2 1.2 0 0 0-1.2-1.2H3.4a1.2 1.2 0 0 0-1.2 1.2v6a1.2 1.2 0 0 0 1.2 1.2h2"/></svg>`,
-  cli: `<svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round"><rect x="1.6" y="2.8" width="12.8" height="10.4" rx="1.4"/><path d="M4.6 6.6 6.6 8.6l-2 2M8.8 10.8h2.8"/></svg>`,
-};
-
-function recentRow(d) {
-  const s = statusLook(d.Status);
-  return `<div class="recent-row">
-    <span class="pill ${s.tone}">${esc(s.label)}</span>
-    <span>${d.CheckOnly ? "Validation" : "Deploy"}</span>
-    <span class="when">${esc(relative(d.CompletedDate || d.StartDate || d.CreatedDate))}</span>
-    <span class="row-tools">
-      <button class="icon-chip" data-deploy-setup="${esc(d.Id)}" title="Open in Setup">${ROW_ICONS.setup}</button>
-      <button class="icon-chip" data-copy="${esc(d.Id)}" title="Copy deploy Id">${ROW_ICONS.copy}</button>
-      <button class="icon-chip" data-copy="${esc(sfCommand(d.Id))}" title="Copy sf command">${ROW_ICONS.cli}</button>
-    </span>
-  </div>`;
-}
-
-function progressBar(label, done, total, errors) {
-  const pct = total ? Math.min(100, Math.round((done / total) * 100)) : 0;
-  const tone = errors > 0 ? "err" : pct === 100 ? "ok" : "";
-  const errText = errors > 0 ? ` · ${errors} error${errors > 1 ? "s" : ""}` : "";
-  return `<div class="bar-row">
-    <div class="bar-lab">
-      <span>${label} <b>${pct}%</b></span>
-      <span>${formatNumber(done ?? 0)}/${formatNumber(total)}${errText}</span>
-    </div>
-    <div class="bar"><i class="${tone}" style="width:${pct}%"></i></div>
-  </div>`;
-}
 
 /**
  * Remaining time for a running deployment.
@@ -1105,29 +1089,63 @@ function deployEtaLine(d, now) {
   let trailing = "";
 
   if (testsTotal > 0 && testsDone < testsTotal) {
-    phase = "tests";
+    phase = t("deploy.phase.tests");
     eta = estimateFinish(deploySamples, {
       key: `${d.Id}:tests`, done: testsDone, total: testsTotal, startedAt, now,
     });
   } else if (compTotal > 0 && compDone < compTotal) {
-    phase = "components";
+    phase = t("deploy.phase.components");
     eta = estimateFinish(deploySamples, {
       key: `${d.Id}:components`, done: compDone, total: compTotal, startedAt, now,
     });
     const testsFollow = d.RunTestsEnabled === true ||
       (d.TestLevel && d.TestLevel !== "NoTestRun");
-    if (testsFollow) trailing = " · tests still to run";
+    if (testsFollow) trailing = ` · ${t("deploy.testsStillToRun")}`;
   }
 
   if (!eta) return "";
 
-  const basis = eta.measured
-    ? "measured from progress across polls"
-    : "rough average since the deployment started";
+  const basis = eta.measured ? t("deploy.etaMeasured") : t("deploy.etaRough");
   return `<p class="job-eta" title="${esc(basis)}">` +
-    `~${esc(duration(eta.remainingMs))} left in ${phase} ` +
-    `<span class="soft">· ${esc(eta.finishAt.toLocaleTimeString())}${trailing}` +
-    `${eta.measured ? "" : " (rough)"}</span></p>`;
+    `${esc(t("deploy.etaLeft", { duration: fmt.duration(eta.remainingMs), phase }))} ` +
+    `<span class="soft">· ${esc(fmt.time(eta.finishAt))}${esc(trailing)}` +
+    `${eta.measured ? "" : ` ${esc(t("jobs.rough"))}`}</span></p>`;
+}
+
+const ROW_ICONS = {
+  setup: `<svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M6.4 3.2h6.4v6.4"/><path d="M12.8 3.2 6 10M9.6 12.8H3.2V6.4"/></svg>`,
+  copy: `<svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linejoin="round"><rect x="5.6" y="5.6" width="8.2" height="8.2" rx="1.2"/><path d="M10.6 5.6v-2a1.2 1.2 0 0 0-1.2-1.2H3.4a1.2 1.2 0 0 0-1.2 1.2v6a1.2 1.2 0 0 0 1.2 1.2h2"/></svg>`,
+  cli: `<svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round"><rect x="1.6" y="2.8" width="12.8" height="10.4" rx="1.4"/><path d="M4.6 6.6 6.6 8.6l-2 2M8.8 10.8h2.8"/></svg>`,
+};
+
+function recentRow(d) {
+  const look = statusLook(d.Status);
+  return `<div class="recent-row">
+    <span class="pill ${look.tone}">${esc(look.label)}</span>
+    <span>${esc(d.CheckOnly ? t("deploy.validation") : t("deploy.deployShort"))}</span>
+    <span class="when">${esc(fmt.relative(d.CompletedDate || d.StartDate || d.CreatedDate))}</span>
+    <span class="row-tools">
+      <button class="icon-chip" data-deploy-setup="${esc(d.Id)}"
+        title="${esc(t("deploy.openSetup"))}">${ROW_ICONS.setup}</button>
+      <button class="icon-chip" data-copy="${esc(d.Id)}"
+        title="${esc(t("deploy.copyIdTitle"))}">${ROW_ICONS.copy}</button>
+      <button class="icon-chip" data-copy="${esc(sfCommand(d.Id))}"
+        title="${esc(t("deploy.copySf"))}">${ROW_ICONS.cli}</button>
+    </span>
+  </div>`;
+}
+
+function progressBar(label, done, total, errors) {
+  const pct = total ? Math.min(100, Math.round((done / total) * 100)) : 0;
+  const tone = errors > 0 ? "err" : pct === 100 ? "ok" : "";
+  const errText = errors > 0 ? ` · ${t("jobs.errors", { count: Number(errors) })}` : "";
+  return `<div class="bar-row">
+    <div class="bar-lab">
+      <span>${esc(label)} <b>${pct}%</b></span>
+      <span>${esc(fmt.number(done ?? 0))}/${esc(fmt.number(total))}${esc(errText)}</span>
+    </div>
+    <div class="bar"><i class="${tone}" style="width:${pct}%"></i></div>
+  </div>`;
 }
 
 /** Salesforce collapses single-element arrays into objects; normalise both. */
@@ -1139,9 +1157,12 @@ function collectFailures(details) {
   const out = [];
 
   for (const f of toArray(d.componentFailures).slice(0, 20)) {
-    const where = f.lineNumber ? ` (line ${f.lineNumber}${f.columnNumber ? `, col ${f.columnNumber}` : ""})` : "";
+    const where = f.lineNumber
+      ? ` (${t("deploy.atLine", { line: f.lineNumber })}${
+          f.columnNumber ? `, ${t("deploy.atColumn", { column: f.columnNumber })}` : ""})`
+      : "";
     out.push({
-      title: `${f.componentType || "Component"}: ${f.fullName || f.fileName || "?"}${where}`,
+      title: `${f.componentType || t("deploy.componentLabel")}: ${f.fullName || f.fileName || "?"}${where}`,
       body: f.problem || "",
     });
   }
@@ -1149,7 +1170,7 @@ function collectFailures(details) {
   const tests = d.runTestResult || {};
   for (const f of toArray(tests.failures).slice(0, 20)) {
     out.push({
-      title: `Test: ${f.name || "?"}.${f.methodName || ""}`,
+      title: `${t("deploy.testLabel")}: ${f.name || "?"}.${f.methodName || ""}`,
       body: [f.message, f.stackTrace].filter(Boolean).join("\n"),
     });
   }
@@ -1157,17 +1178,19 @@ function collectFailures(details) {
   return out;
 }
 
+const STATUS_TONES = {
+  Succeeded: "ok",
+  SucceededPartial: "warn",
+  Failed: "err",
+  Canceled: "idle",
+  Canceling: "warn",
+  InProgress: "run",
+  Pending: "run",
+};
+
 function statusLook(status) {
-  switch (status) {
-    case "Succeeded": return { label: "Succeeded", tone: "ok" };
-    case "SucceededPartial": return { label: "Partial", tone: "warn" };
-    case "Failed": return { label: "Failed", tone: "err" };
-    case "Canceled": return { label: "Canceled", tone: "idle" };
-    case "Canceling": return { label: "Canceling", tone: "warn" };
-    case "InProgress": return { label: "In progress", tone: "run" };
-    case "Pending": return { label: "Pending", tone: "run" };
-    default: return { label: status || "Unknown", tone: "idle" };
-  }
+  if (!status) return { label: t("status.unknown"), tone: "idle" };
+  return { label: tOr(`status.${status}`, status), tone: STATUS_TONES[status] || "idle" };
 }
 
 // ---------------------------------------------------------------------------
@@ -1183,10 +1206,11 @@ const SC_ICONS = {
 async function renderShortcuts() {
   const list = await loadShortcuts();
   el.shortcuts.innerHTML = list.map(s => {
-    if (s.kind === "devconsole") return `<button class="sc" data-devconsole>${SC_ICONS.devconsole}${esc(s.label)}</button>`;
-    if (s.kind === "apex") return `<button class="sc" data-apexrunner>${SC_ICONS.apex}${esc(s.label)}</button>`;
+    const label = esc(shortcutLabel(s));
+    if (s.kind === "devconsole") return `<button class="sc" data-devconsole>${SC_ICONS.devconsole}${label}</button>`;
+    if (s.kind === "apex") return `<button class="sc" data-apexrunner>${SC_ICONS.apex}${label}</button>`;
     if (!s.path) return "";
-    return `<button class="sc" data-setup="${esc(s.path)}">${SC_ICONS.path}${esc(s.label)}</button>`;
+    return `<button class="sc" data-setup="${esc(s.path)}">${SC_ICONS.path}${label}</button>`;
   }).join("");
 }
 
@@ -1221,24 +1245,24 @@ async function onJumpInput() {
     return;
   }
   if (!/^[a-zA-Z0-9]{15}([a-zA-Z0-9]{3})?$/.test(raw)) {
-    el.jumpHint.textContent = "Ids are 15 or 18 characters.";
+    el.jumpHint.textContent = t("jump.badLength");
     el.jumpHint.classList.add("bad");
     return;
   }
 
   el.jumpHint.classList.remove("bad");
-  el.jumpHint.textContent = "Looking up…";
+  el.jumpHint.textContent = t("jump.lookingUp");
 
   try {
     const map = await keyPrefixMap();
     const name = map[raw.slice(0, 3)];
     if (!name) {
-      el.jumpHint.textContent = `Unknown object prefix "${raw.slice(0, 3)}".`;
+      el.jumpHint.textContent = t("jump.unknownPrefix", { prefix: raw.slice(0, 3) });
       el.jumpHint.classList.add("bad");
       return;
     }
     jumpTarget = { name, id: raw };
-    el.jumpHint.textContent = `${name} — press Enter to open`;
+    el.jumpHint.textContent = t("jump.ready", { object: name });
   } catch (err) {
     el.jumpHint.textContent = err.message;
     el.jumpHint.classList.add("bad");
@@ -1251,66 +1275,23 @@ function onJumpKey(ev) {
 }
 
 // ---------------------------------------------------------------------------
-// formatting
+// formatting helpers
 // ---------------------------------------------------------------------------
 
 function timeSummary(d) {
   if (isActive(d)) {
     const start = Date.parse(d.StartDate || d.CreatedDate);
-    return Number.isNaN(start) ? "running" : `running ${duration(Date.now() - start)}`;
+    return Number.isNaN(start)
+      ? t("status.InProgress")
+      : t("deploy.running", { duration: fmt.duration(Date.now() - start) });
   }
   const end = d.CompletedDate || d.StartDate || d.CreatedDate;
   const start = Date.parse(d.StartDate || d.CreatedDate);
   const finish = Date.parse(end);
   const took = !Number.isNaN(start) && !Number.isNaN(finish) && finish > start
-    ? ` · ${duration(finish - start)}`
+    ? ` · ${fmt.duration(finish - start)}`
     : "";
-  return `${relative(end)}${took}`;
-}
-
-function duration(ms) {
-  const s = Math.max(0, Math.round(ms / 1000));
-  if (s < 60) return `${s}s`;
-  const m = Math.floor(s / 60);
-  if (m < 60) return `${m}m ${s % 60}s`;
-  const h = Math.floor(m / 60);
-  if (h < 24) return `${h}h ${m % 60}m`;
-  return `${Math.floor(h / 24)}d ${h % 24}h`;
-}
-
-function relative(iso) {
-  const t = Date.parse(iso);
-  if (Number.isNaN(t)) return "—";
-  const diff = Date.now() - t;
-  if (diff < 60000) return "just now";
-  if (diff < 3600000) return `${Math.floor(diff / 60000)}m ago`;
-  if (diff < 86400000) return `${Math.floor(diff / 3600000)}h ago`;
-  if (diff < 604800000) return `${Math.floor(diff / 86400000)}d ago`;
-  return new Date(t).toLocaleDateString();
-}
-
-/** Short absolute stamp for future times, where "in 4h" is less useful than "14:00". */
-function absoluteShort(iso) {
-  const t = Date.parse(iso);
-  if (Number.isNaN(t)) return "—";
-  const d = new Date(t);
-  const sameDay = d.toDateString() === new Date().toDateString();
-  const time = d.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
-  return sameDay ? time : `${d.toLocaleDateString([], { day: "2-digit", month: "2-digit" })} ${time}`;
-}
-
-const formatNumber = n => Number(n || 0).toLocaleString();
-
-function formatMb(mb) {
-  const n = Number(mb) || 0;
-  return n >= 1024 ? `${(n / 1024).toFixed(1)} GB` : `${formatNumber(Math.round(n))} MB`;
-}
-
-function formatBytes(bytes) {
-  const n = Number(bytes) || 0;
-  if (n >= 1024 ** 3) return `${(n / 1024 ** 3).toFixed(2)} GB`;
-  if (n >= 1024 ** 2) return `${(n / 1024 ** 2).toFixed(1)} MB`;
-  return `${(n / 1024).toFixed(0)} KB`;
+  return `${fmt.relative(end)}${took}`;
 }
 
 const shortId = id => (id || "").slice(0, 15);
@@ -1378,7 +1359,7 @@ async function checkForUpdate({ force = false } = {}) {
     info = await bg("checkUpdate", { force });
   } catch (err) {
     // Offline, rate limited, repo renamed - never worth interrupting the user over.
-    console.warn("[Stara SF Toolbox] update check failed:", err.message);
+    console.warn("[Orgscope] update check failed:", err.message);
     return;
   }
 
@@ -1391,16 +1372,15 @@ async function checkForUpdate({ force = false } = {}) {
   if (!force && updateDismissed === info.latest) return;
 
   el.updateBanner.innerHTML = `
-    <div class="banner-title">Update available: v${esc(info.latest)}</div>
-    <div class="banner-body">
-      You are on v${esc(info.current)}. Run <code>git pull</code> in the extension
-      folder, then reload it.
-    </div>
+    <div class="banner-title">${esc(t("update.title", { version: info.latest }))}</div>
+    <div class="banner-body">${
+      t("update.body", { current: esc(info.current), cmd: "<code>git pull</code>" })
+    }</div>
     <div class="banner-actions">
-      <button class="banner-btn" data-action="reload-ext">Reload extension</button>
-      <button class="banner-btn" data-href="${esc(info.commitsUrl)}">What changed</button>
+      <button class="banner-btn" data-action="reload-ext">${esc(t("stale.reload"))}</button>
+      <button class="banner-btn" data-href="${esc(info.commitsUrl)}">${esc(t("update.whatChanged"))}</button>
       <button class="banner-btn" data-action="dismiss-update"
-              data-version="${esc(info.latest)}">Dismiss</button>
+              data-version="${esc(info.latest)}">${esc(t("update.dismiss"))}</button>
     </div>`;
   el.updateBanner.hidden = false;
 }
@@ -1419,7 +1399,7 @@ document.addEventListener("click", async ev => {
   const copySource = ev.target.closest("[data-copy]");
   if (copySource) {
     const ok = await copyText(copySource.dataset.copy);
-    flash(copySource, ok ? "Copied" : "Copy failed");
+    flash(copySource, ok ? t("common.copied") : t("common.copyFailed"));
     return;
   }
 
@@ -1435,8 +1415,9 @@ document.addEventListener("click", async ev => {
   if (action === "reload-ext") {
     // The panel dies with the extension context, so say what happens next first.
     el.updateBanner.innerHTML =
-      `<div class="banner-title">Reloading…</div>
-       <div class="banner-body">Refresh this Salesforce tab to bring the panel back.</div>`;
+      `<div class="banner-title">${esc(t("update.reloading"))}</div>
+       <div class="banner-body">${esc(t("update.reloadingBody"))}</div>`;
+    el.updateBanner.hidden = false;
     bg("reloadExtension").catch(() => {});
     return;
   }
@@ -1496,9 +1477,13 @@ chrome.storage.onChanged.addListener((changes, area) => {
   if (area === "sync" && changes[SHORTCUTS_KEY]) renderShortcuts();
 });
 
+// A language switch touches every rendered string, so start the panel over
+// rather than trying to re-translate what is already on screen.
+onLocaleChanged(() => location.reload());
+
 window.addEventListener("message", ev => {
   const msg = ev.data;
-  if (msg?.source !== "stara-sfx-host") return;
+  if (msg?.source !== "orgscope-host") return;
   if (msg.type !== "visibility") return;
 
   const wasHidden = !visible;
@@ -1523,6 +1508,9 @@ window.addEventListener("message", ev => {
 async function init() {
   toHost({ type: "ready" });
 
+  await initI18n();
+  applyStaticText();
+
   el.orgName.title = `v${chrome.runtime.getManifest().version}`;
   renderShortcuts();
   checkForUpdate(); // fire and forget - never blocks the org data
@@ -1530,7 +1518,7 @@ async function init() {
   try {
     session = await bg("getSession", { host: pageHost });
   } catch (err) {
-    el.orgHost.textContent = "not connected";
+    el.orgHost.textContent = t("common.notConnected");
     el.deploy.innerHTML = "";
     el.limits.innerHTML = "";
     reportBgError(err);

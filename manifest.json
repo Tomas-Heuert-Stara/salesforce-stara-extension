@@ -1,7 +1,7 @@
 {
   "manifest_version": 3,
-  "name": "Stara SF Toolbox",
-  "version": "0.2.1",
+  "name": "Orgscope",
+  "version": "0.3.0",
   "description": "Side panel for Salesforce: live deployment status, Apex job KPIs and Setup shortcuts for the org you are logged into.",
   "minimum_chrome_version": "116",
   "permissions": [
@@ -52,7 +52,7 @@
     }
   ],
   "action": {
-    "default_title": "Toggle Stara SF Toolbox",
+    "default_title": "Toggle Orgscope",
     "default_icon": {
       "16": "icons/icon16.png",
       "48": "icons/icon48.png",
@@ -69,7 +69,7 @@
       "suggested_key": {
         "default": "Alt+Shift+S"
       },
-      "description": "Toggle the Stara SF Toolbox panel"
+      "description": "Toggle the Orgscope panel"
     }
   }
 }

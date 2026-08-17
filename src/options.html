@@ -2,37 +2,37 @@
 <html lang="en">
 <head>
   <meta charset="utf-8">
-  <title>Stara SF Toolbox — Options</title>
+  <title>Orgscope — Options</title>
   <link rel="stylesheet" href="page.css">
 </head>
 <body>
   <div class="page">
     <div class="page-hd">
       <div class="grow">
-        <h1>Stara SF Toolbox</h1>
-        <p class="sub">Version <span id="version">—</span></p>
+        <h1>Orgscope</h1>
+        <p class="sub" id="version">—</p>
       </div>
-      <span class="saved" id="saved">Saved</span>
+      <span class="saved" id="saved" data-i18n="options.saved">Saved</span>
     </div>
 
     <div class="block">
-      <h2>Panel shortcuts</h2>
+      <h2 data-i18n="options.language">Language</h2>
+      <select id="language"></select>
+      <p class="hint" data-i18n="options.languageHint"></p>
+    </div>
+
+    <div class="block">
+      <h2 data-i18n="options.shortcuts">Panel shortcuts</h2>
       <div class="rows" id="rows"></div>
 
       <div class="add-row">
         <select id="catalog"></select>
-        <button class="btn" id="addCatalog">Add</button>
-        <button class="btn" id="addCustom">Add custom</button>
-        <button class="btn danger" id="reset">Restore defaults</button>
+        <button class="btn" id="addCatalog" data-i18n="options.add">Add</button>
+        <button class="btn" id="addCustom" data-i18n="options.addCustom">Add custom</button>
+        <button class="btn danger" id="reset" data-i18n="options.reset">Restore defaults</button>
       </div>
 
-      <p class="hint">
-        Paths are relative to the org's Lightning host, so
-        <code>/lightning/setup/Flows/home</code> becomes
-        <code>https://yourorg.lightning.force.com/lightning/setup/Flows/home</code>.
-        Anything you can reach in Setup can go here — copy the path out of the address
-        bar. Changes save automatically and sync to your other machines.
-      </p>
+      <p class="hint" data-i18n="options.hint"></p>
     </div>
   </div>
 

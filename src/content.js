@@ -7,7 +7,7 @@
  */
 (() => {
   if (window.top !== window.self) return; // never inside Lightning's VF iframes
-  if (document.getElementById("stara-sfx-root")) return;
+  if (document.getElementById("orgscope-root")) return;
 
   const PANEL_URL = chrome.runtime.getURL("src/panel.html");
   const MIN_WIDTH = 300;
@@ -79,18 +79,18 @@
   `;
 
   const root = document.createElement("div");
-  root.id = "stara-sfx-root";
+  root.id = "orgscope-root";
   const shadow = root.attachShadow({ mode: "open" });
   shadow.innerHTML = `
     <style>${STYLE}</style>
     <div class="wrap" part="wrap">
-      <button class="tab" title="Stara SF Toolbox (Alt+Shift+S)" aria-label="Toggle Stara SF Toolbox">
+      <button class="tab" title="Orgscope (Alt+Shift+S)" aria-label="Toggle Orgscope">
         <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="2"
              stroke-linecap="round" stroke-linejoin="round"><path d="M10 3 5 8l5 5"/></svg>
       </button>
       <div class="panel">
         <div class="grip"></div>
-        <iframe title="Stara SF Toolbox" allow="clipboard-write"></iframe>
+        <iframe title="Orgscope" allow="clipboard-write"></iframe>
       </div>
     </div>
   `;
@@ -128,7 +128,7 @@
 
   function postToPanel(msg) {
     if (!loaded) return;
-    iframe.contentWindow?.postMessage({ source: "stara-sfx-host", ...msg }, "*");
+    iframe.contentWindow?.postMessage({ source: "orgscope-host", ...msg }, "*");
   }
 
   tab.addEventListener("click", () => setOpen(!isOpen()));
@@ -156,7 +156,7 @@
   window.addEventListener("message", ev => {
     if (ev.source !== iframe.contentWindow) return;
     const msg = ev.data;
-    if (!msg || msg.source !== "stara-sfx-panel") return;
+    if (!msg || msg.source !== "orgscope-panel") return;
 
     switch (msg.type) {
       case "ready":
