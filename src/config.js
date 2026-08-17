@@ -8,7 +8,7 @@
  * Leave `owner` or `repo` empty to disable the check entirely.
  */
 export const REPO = {
-  owner: "",   // e.g. "tomas-heuert"
-  repo: "",    // e.g. "salesforce-stara-extension"
+  owner: "Tomas-Heuert-Stara",
+  repo: "salesforce-stara-extension",
   branch: "main",
 };
