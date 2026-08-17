@@ -1,0 +1,106 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <title>Stara SF Toolbox</title>
+  <link rel="stylesheet" href="panel.css">
+</head>
+<body>
+  <header class="hd">
+    <div class="hd-org">
+      <span class="hd-title">Stara SF Toolbox</span>
+      <span class="hd-host" id="orgHost">connecting…</span>
+    </div>
+    <div class="hd-actions">
+      <span class="env" id="envBadge" hidden></span>
+      <button class="icon-btn" id="refreshAll" title="Refresh everything">
+        <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round">
+          <path d="M13.5 8a5.5 5.5 0 1 1-1.7-3.9"/><path d="M13.8 2.6v2.6h-2.6"/>
+        </svg>
+      </button>
+      <button class="icon-btn" id="closeBtn" title="Close panel">
+        <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round">
+          <path d="M4 4l8 8M12 4l-8 8"/>
+        </svg>
+      </button>
+    </div>
+  </header>
+
+  <div class="banner update" id="updateBanner" hidden></div>
+  <div class="banner" id="banner" hidden></div>
+
+  <main class="body">
+    <section class="sec">
+      <h2 class="sec-h">
+        <span>Deployment status</span>
+        <span class="sec-tools">
+          <a class="sec-link" href="#" data-setup="/lightning/setup/DeployStatus/home">Setup</a>
+          <button class="mini-btn" id="refreshDeploy" title="Refresh deployment status">
+            <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round">
+              <path d="M13.5 8a5.5 5.5 0 1 1-1.7-3.9"/><path d="M13.8 2.6v2.6h-2.6"/>
+            </svg>
+          </button>
+        </span>
+      </h2>
+      <div id="deploy" class="deploy"><div class="skeleton"></div></div>
+    </section>
+
+    <section class="sec">
+      <h2 class="sec-h">
+        <span>Apex jobs</span>
+        <span class="sec-tools">
+          <button class="mini-btn" id="refreshJobs" title="Refresh Apex jobs">
+            <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round">
+              <path d="M13.5 8a5.5 5.5 0 1 1-1.7-3.9"/><path d="M13.8 2.6v2.6h-2.6"/>
+            </svg>
+          </button>
+        </span>
+      </h2>
+      <div class="kpis" id="kpis">
+        <button class="kpi" data-setup="/lightning/setup/ScheduledJobs/home" data-kpi="scheduled">
+          <span class="kpi-n">–</span><span class="kpi-l">Scheduled</span>
+        </button>
+        <button class="kpi" data-setup="/lightning/setup/AsyncApexJobs/home" data-kpi="running">
+          <span class="kpi-n">–</span><span class="kpi-l">Running</span>
+        </button>
+        <button class="kpi" data-setup="/lightning/setup/ApexFlexQueue/home" data-kpi="flex">
+          <span class="kpi-n">–</span><span class="kpi-l">Flex queue</span>
+        </button>
+      </div>
+      <p class="kpi-err" id="kpiErr" hidden></p>
+      <div id="runningJobs"></div>
+    </section>
+
+    <section class="sec">
+      <h2 class="sec-h"><span>Shortcuts</span></h2>
+      <div class="shortcuts">
+        <button class="sc" data-setup="/lightning/setup/ObjectManager/home">
+          <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linejoin="round">
+            <path d="M8 1.8 14 5v6L8 14.2 2 11V5z"/><path d="M2 5l6 3 6-3M8 8v6.2"/>
+          </svg>
+          Object Manager
+        </button>
+        <button class="sc" data-devconsole>
+          <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
+            <rect x="1.6" y="2.6" width="12.8" height="10.8" rx="1.4"/><path d="M4.6 6.6 6.6 8.6l-2 2M8.6 10.6h3"/>
+          </svg>
+          Developer Console
+        </button>
+        <button class="sc" data-setup="/lightning/setup/DeployStatus/home">
+          <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
+            <path d="M8 11V2.6M4.8 5.8 8 2.6l3.2 3.2"/><path d="M2.4 10.4v2.2c0 .5.4.8.8.8h9.6c.4 0 .8-.3.8-.8v-2.2"/>
+          </svg>
+          Deployment Status
+        </button>
+      </div>
+    </section>
+  </main>
+
+  <footer class="ft">
+    <span id="updated">—</span>
+    <span id="pollNote"></span>
+  </footer>
+
+  <script src="panel.js" type="module"></script>
+</body>
+</html>
