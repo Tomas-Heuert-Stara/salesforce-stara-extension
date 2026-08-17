@@ -38,6 +38,16 @@ async function handle(msg, sender) {
       await chrome.tabs.create({ url });
       return { opened: true };
     }
+    // The panel is an iframe, so window.open from the host page is not a user
+    // gesture and popup blockers eat it. Opening tabs here always works.
+    case "openTab":
+      await chrome.tabs.create({ url: msg.url, active: msg.active !== false });
+      return { opened: true };
+    // chrome.runtime.openOptionsPage() is unreliable from an embedded extension
+    // frame; going through the service worker is not.
+    case "openOptions":
+      await chrome.runtime.openOptionsPage();
+      return { opened: true };
     case "reloadExtension":
       // Re-reads the folder from disk, which is what a developer-mode install needs
       // after a git pull. Tears down every content script, hence the caller warning.

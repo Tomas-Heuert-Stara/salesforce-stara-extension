@@ -3,10 +3,11 @@
  * so it can call the org's REST/Tooling API directly using the session id the
  * service worker digs out of the cookie jar.
  *
- * Three independent refresh cycles:
+ * Four independent refresh cycles:
  *   deploys - 4s while one is running, 30s otherwise
  *   jobs    - 30s, everything in one composite/batch call
- *   org     - once at boot and on demand (limits, coverage, org identity)
+ *   limits  - 60s, its own fetch so the section's refresh button really refreshes it
+ *   org     - identity and coverage; boot and on demand only
  */
 
 import { loadShortcuts, SHORTCUTS_KEY } from "./shortcuts.js";
@@ -14,6 +15,7 @@ import { loadShortcuts, SHORTCUTS_KEY } from "./shortcuts.js";
 const POLL_DEPLOY_ACTIVE_MS = 4000;
 const POLL_DEPLOY_IDLE_MS = 30000;
 const POLL_JOBS_MS = 30000;
+const POLL_LIMITS_MS = 60000;
 
 const pageHost = new URLSearchParams(location.search).get("host") || location.hostname;
 
@@ -69,6 +71,56 @@ function bg(type, payload = {}) {
     });
   });
 }
+
+/**
+ * After a git pull the panel is served fresh from disk but the MV3 service worker
+ * keeps running the code it was registered with, so newer message types come back
+ * as "Unknown message type". That reads as a broken button unless we name it.
+ */
+const isStaleWorker = err =>
+  /unknown message type|extension context invalidated|receiving end does not exist/i
+    .test(err?.message || "");
+
+function reportBgError(err) {
+  if (!isStaleWorker(err)) {
+    showBanner(esc(err.message));
+    return;
+  }
+  showBanner(`
+    <div class="banner-title">Extension needs a reload</div>
+    <div class="banner-body">
+      Its background worker is still running older code than this panel.
+    </div>
+    <div class="banner-actions">
+      <button class="banner-btn" data-action="reload-ext">Reload extension</button>
+    </div>`);
+}
+
+/**
+ * Every link in the panel opens a new tab, and it has to go through the service
+ * worker: window.open from the host page is not a user gesture there, so popup
+ * blockers silently swallow it.
+ */
+function openTab(url) {
+  bg("openTab", { url }).catch(reportBgError);
+}
+
+/**
+ * <details> elements are rebuilt on every poll, which would otherwise slam them
+ * shut mid-read. Remember each one by key and restore it on the next render.
+ * The toggle event does not bubble, hence the capture-phase listener.
+ */
+const detailsOpen = new Map();
+
+function detailsAttr(key, defaultOpen = false) {
+  const open = detailsOpen.has(key) ? detailsOpen.get(key) : defaultOpen;
+  return `data-key="${key}"${open ? " open" : ""}`;
+}
+
+document.addEventListener("toggle", ev => {
+  const d = ev.target;
+  if (d.tagName === "DETAILS" && d.dataset.key) detailsOpen.set(d.dataset.key, d.open);
+}, true);
 
 class SalesforceClient {
   constructor(host, sessionId) {
@@ -256,11 +308,14 @@ const isActive = d => ACTIVE_STATUSES.has(d?.Status);
 let lastDeploys = [];
 let deployTimer = null;
 let jobsTimer = null;
+let limitsTimer = null;
 let deployBusy = false;
 let jobsBusy = false;
+let limitsBusy = false;
 let orgBusy = false;
 let deployStamp = null;
 let jobsStamp = null;
+let limitsStamp = null;
 
 async function refreshDeploys() {
   if (deployBusy || !client) return;
@@ -302,7 +357,6 @@ async function refreshJobs({ retry = true } = {}) {
       soqlPath(failedJobsQuery()),
       soqlPath(Q_LOG_COUNT),
       soqlPath(Q_LOG_SIZE),
-      "limits",
     ]);
 
     if (r.some(x => !x.ok && isAuthError(x.error))) {
@@ -324,7 +378,6 @@ async function refreshJobs({ retry = true } = {}) {
     renderScheduledJobs(r[4], r[0]);
     renderFailedJobs(r[5]);
     renderLogs(r[6], r[7]);
-    renderLimits(r[8]);
     jobsStamp = new Date();
   } catch (err) {
     if (isAuthError(err)) {
@@ -341,11 +394,30 @@ async function refreshJobs({ retry = true } = {}) {
   }
 }
 
-/** Org identity and code coverage: slow-moving, so no timer - boot and on demand. */
-async function refreshOrg() {
+/** Limits get their own call so the section's refresh button actually refreshes them. */
+async function refreshLimits() {
+  if (limitsBusy || !client) return;
+  limitsBusy = true;
+  el.refreshOrg.classList.add("spin");
+
+  try {
+    const v = await client.apiVersion();
+    renderLimits({ ok: true, value: await client.request(`/services/data/v${v}/limits`) });
+    limitsStamp = new Date();
+  } catch (err) {
+    renderLimits({ ok: false, error: err });
+  } finally {
+    limitsBusy = false;
+    el.refreshOrg.classList.remove("spin");
+    stampFooter();
+    scheduleLimits();
+  }
+}
+
+/** Org identity and code coverage barely move, so there is no timer for them. */
+async function refreshOrgMeta() {
   if (orgBusy || !client) return;
   orgBusy = true;
-  el.refreshOrg.classList.add("spin");
 
   const [org, coverage] = await Promise.allSettled([
     client.query(Q_ORG),
@@ -354,14 +426,12 @@ async function refreshOrg() {
 
   if (org.status === "fulfilled") renderOrgIdentity(org.value.records?.[0]);
   renderCoverage(coverage);
-
   orgBusy = false;
-  el.refreshOrg.classList.remove("spin");
 }
 
 function scheduleDeploys() {
   clearTimeout(deployTimer);
-  if (!visible) return;
+  if (!visible) return updatePollNote();
   const active = lastDeploys.some(isActive);
   deployTimer = setTimeout(refreshDeploys, active ? POLL_DEPLOY_ACTIVE_MS : POLL_DEPLOY_IDLE_MS);
   updatePollNote();
@@ -369,23 +439,36 @@ function scheduleDeploys() {
 
 function scheduleJobs() {
   clearTimeout(jobsTimer);
-  if (!visible) return;
+  if (!visible) return updatePollNote();
   jobsTimer = setTimeout(refreshJobs, POLL_JOBS_MS);
+  updatePollNote();
+}
+
+function scheduleLimits() {
+  clearTimeout(limitsTimer);
+  if (!visible) return updatePollNote();
+  limitsTimer = setTimeout(refreshLimits, POLL_LIMITS_MS);
   updatePollNote();
 }
 
 function updatePollNote() {
   if (!visible) {
     el.pollNote.textContent = "paused";
+    el.pollNote.title = "Polling stops while the panel is closed or the tab is hidden.";
     return;
   }
   const active = lastDeploys.some(isActive);
-  el.pollNote.textContent = `deploys ${active ? "4s" : "30s"} · jobs 30s`;
+  el.pollNote.textContent = active ? "live" : "auto";
+  el.pollNote.title = `deploys ${active ? "4s" : "30s"} · jobs 30s · limits 60s`;
 }
 
 function stampFooter() {
+  const stamps = [deployStamp, jobsStamp, limitsStamp].filter(Boolean);
+  if (stamps.length === 0) return;
+  const latest = new Date(Math.max(...stamps.map(d => d.getTime())));
   const t = d => (d ? d.toLocaleTimeString() : "—");
-  el.updated.textContent = `deploys ${t(deployStamp)} · jobs ${t(jobsStamp)}`;
+  el.updated.textContent = `updated ${t(latest)}`;
+  el.updated.title = `deploys ${t(deployStamp)} · jobs ${t(jobsStamp)} · limits ${t(limitsStamp)}`;
 }
 
 // ---------------------------------------------------------------------------
@@ -425,13 +508,17 @@ function renderLimits(result) {
     if (!lim || typeof lim.Max !== "number") return "";
 
     const max = lim.Max;
+    // Remaining goes negative once a limit is blown through; used must follow it
+    // past 100% rather than being clamped, or the row hides the actual problem.
     const used = max - (lim.Remaining ?? 0);
-    const pct = max > 0 ? Math.min(100, Math.round((used / max) * 100)) : 0;
-    const tone = pct >= 90 ? "bad" : pct >= 75 ? "warn" : "";
+    const pct = max > 0 ? Math.round((used / max) * 100) : 0;
+    const width = Math.min(100, Math.max(0, pct));
+    const tone = pct > 100 ? "over" : pct >= 90 ? "bad" : pct >= 75 ? "warn" : "";
     const fmt = unit === "mb" ? formatMb : formatNumber;
+    const over = pct > 100 ? ` · ${fmt(used - max)} over` : "";
 
-    return `<div class="lim ${tone}" title="${esc(label)}: ${used} of ${max}">
-      <i style="width:${pct}%"></i>
+    return `<div class="lim ${tone}" title="${esc(label)}: ${fmt(used)} of ${fmt(max)}${over}">
+      <i style="width:${width}%"></i>
       <span class="lim-l">${esc(label)}</span>
       <span class="lim-v">${fmt(used)} / ${fmt(max)}</span>
       <span class="lim-p">${pct}%</span>
@@ -501,22 +588,23 @@ function renderKpis(results, fatal) {
 // ---------------------------------------------------------------------------
 
 /**
- * Throughput samples per job id, collected across refreshes.
+ * Throughput samples, collected across refreshes and keyed per unit of work
+ * (a job id, or a deployment id plus its phase).
  *
- * AsyncApexJob has no "started processing" timestamp - CreatedDate is when the job
- * was queued, which for anything that waited in the flex queue makes a naive
- * items/elapsed rate far too pessimistic. Once we have watched a job across two
- * polls we can measure the real rate instead.
+ * Neither source gives us a clean "started processing" timestamp: AsyncApexJob's
+ * CreatedDate is when the job was *queued*, and a deployment's StartDate covers
+ * earlier phases too. Both make a naive done/elapsed rate too pessimistic, so once
+ * we have watched something across two polls we use the rate we measured instead.
  */
-const jobSamples = new Map();
 const MIN_SAMPLE_SPAN_MS = 10000;
+const jobSamples = new Map();
+const deploySamples = new Map();
 
-function sampleJob(job, now) {
-  const n = Number(job.JobItemsProcessed) || 0;
-  const existing = jobSamples.get(job.Id);
+function sampleProgress(map, key, n, now) {
+  const existing = map.get(key);
   if (!existing) {
     const fresh = { firstT: now, firstN: n, lastT: now, lastN: n };
-    jobSamples.set(job.Id, fresh);
+    map.set(key, fresh);
     return fresh;
   }
   existing.lastT = now;
@@ -524,21 +612,27 @@ function sampleJob(job, now) {
   return existing;
 }
 
-function estimateEta(job, sample, now) {
-  const total = Number(job.TotalJobItems) || 0;
-  const done = Number(job.JobItemsProcessed) || 0;
+function pruneSamples(map, liveKeys) {
+  map.forEach((_, key) => {
+    if (!liveKeys.has(key)) map.delete(key);
+  });
+}
+
+/** Remaining-time estimate from a done/total pair. Null when it cannot be guessed. */
+function estimateFinish(map, { key, done, total, startedAt, now }) {
   if (!total || done >= total) return null;
 
+  const sample = sampleProgress(map, key, done, now);
   const span = sample.lastT - sample.firstT;
   const delta = sample.lastN - sample.firstN;
 
-  let rate = null;      // items per ms
+  let rate = null;      // units per ms
   let measured = false;
   if (span >= MIN_SAMPLE_SPAN_MS && delta > 0) {
     rate = delta / span;
     measured = true;
   } else {
-    const elapsed = now - Date.parse(job.CreatedDate);
+    const elapsed = now - Date.parse(startedAt);
     if (elapsed > 0 && done > 0) rate = done / elapsed;
   }
   if (!rate || !Number.isFinite(rate)) return null;
@@ -557,9 +651,7 @@ function renderRunningJobs(detail, countResult) {
   }
 
   const jobs = detail.value.records || [];
-  jobSamples.forEach((_, id) => {
-    if (!jobs.some(j => j.Id === id)) jobSamples.delete(id);
-  });
+  pruneSamples(jobSamples, new Set(jobs.map(j => j.Id)));
 
   if (jobs.length === 0) {
     el.runningJobs.innerHTML = "";
@@ -576,9 +668,6 @@ function renderRunningJobs(detail, countResult) {
 }
 
 function jobRow(job, now) {
-  const sample = sampleJob(job, now);
-  const eta = estimateEta(job, sample, now);
-
   const name = job.ApexClass?.Name || "(class unavailable)";
   const method = job.MethodName ? `<span class="method">.${esc(job.MethodName)}</span>` : "";
   const who = job.CreatedBy?.Name;
@@ -586,6 +675,10 @@ function jobRow(job, now) {
   const total = Number(job.TotalJobItems) || 0;
   const done = Number(job.JobItemsProcessed) || 0;
   const errors = Number(job.NumberOfErrors) || 0;
+
+  const eta = estimateFinish(jobSamples, {
+    key: job.Id, done, total, startedAt: job.CreatedDate, now,
+  });
 
   const parts = [
     `<div class="job">`,
@@ -649,7 +742,7 @@ function renderFailedJobs(result) {
   }
 
   el.failedJobs.innerHTML = `
-    <details class="group bad">
+    <details class="group bad" ${detailsAttr("failed-jobs")}>
       <summary>Failed in the last 24h <span class="count">${jobs.length}</span></summary>
       ${jobs.map(j => `
         <div class="cron">
@@ -691,7 +784,7 @@ function renderScheduledJobs(result, countResult) {
 
   // Closed by default - a production org can carry dozens of these.
   el.scheduledJobs.innerHTML = `
-    <details class="group ${unhealthy ? "bad" : ""}">
+    <details class="group ${unhealthy ? "bad" : ""}" ${detailsAttr("scheduled-jobs")}>
       <summary>
         Scheduled jobs <span class="count">${total}</span>
         ${unhealthy ? `<span class="count">${unhealthy} need attention</span>` : ""}
@@ -750,12 +843,8 @@ function renderLogs(countResult, sizeResult) {
   purgeArmed = false;
 }
 
-function purgeButton() {
-  return el.logs.querySelector('[data-action="purge-logs"]');
-}
-
 function onPurgeClick() {
-  const btn = purgeButton();
+  const btn = el.logs.querySelector('[data-action="purge-logs"]');
   if (!btn || btn.disabled) return;
 
   // Two-step confirm: this is irreversible and there is no undo in Salesforce.
@@ -870,6 +959,11 @@ async function renderDeployments(settled) {
   }
 
   lastDeploys = settled.value;
+  pruneSamples(
+    deploySamples,
+    new Set(lastDeploys.flatMap(d => [`${d.Id}:tests`, `${d.Id}:components`]))
+  );
+
   if (lastDeploys.length === 0) {
     el.deploy.innerHTML = `<p class="empty">No deployments recorded in this org.</p>`;
     return;
@@ -889,7 +983,8 @@ async function renderDeployments(settled) {
   el.deploy.innerHTML =
     deployCard(featured, details) +
     (rest.length
-      ? `<details class="recent"><summary>${rest.length} earlier deployment${rest.length > 1 ? "s" : ""}</summary>
+      ? `<details class="recent" ${detailsAttr("recent-deploys")}>
+           <summary>${rest.length} earlier deployment${rest.length > 1 ? "s" : ""}</summary>
            ${rest.map(recentRow).join("")}
          </details>`
       : "");
@@ -923,6 +1018,9 @@ function deployCard(d, details) {
       d.NumberTestsTotal, d.NumberTestErrors));
   }
 
+  if (active) {
+    parts.push(deployEtaLine(d, Date.now()));
+  }
   if (active && d.StateDetail) {
     parts.push(`<p class="state-detail">${esc(d.StateDetail)}</p>`);
   }
@@ -933,7 +1031,8 @@ function deployCard(d, details) {
   const failures = collectFailures(details);
   if (failures.length) {
     parts.push(
-      `<details class="errs" open><summary>${failures.length} failure${failures.length > 1 ? "s" : ""}</summary>`,
+      `<details class="errs" ${detailsAttr(`failures:${d.Id}`, true)}>`,
+      `<summary>${failures.length} failure${failures.length > 1 ? "s" : ""}</summary>`,
       failures.map(f => `<div class="err-item"><b>${esc(f.title)}</b><span>${esc(f.body)}</span></div>`).join(""),
       `</details>`
     );
@@ -944,11 +1043,33 @@ function deployCard(d, details) {
   parts.push(`<div class="card-actions">
     <button class="chip" data-deploy-setup="${esc(d.Id)}">Open in Setup</button>
     <button class="chip" data-copy="${esc(d.Id)}">Copy Id</button>
-    <button class="chip" data-copy="sf project deploy report --job-id ${esc(d.Id)}">Copy sf command</button>
+    <button class="chip" data-copy="${esc(sfCommand(d.Id))}">Copy sf command</button>
   </div>`);
 
   parts.push(`</div>`);
   return parts.join("");
+}
+
+const sfCommand = id => `sf project deploy report --job-id ${id}`;
+
+const ROW_ICONS = {
+  setup: `<svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M6.4 3.2h6.4v6.4"/><path d="M12.8 3.2 6 10M9.6 12.8H3.2V6.4"/></svg>`,
+  copy: `<svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linejoin="round"><rect x="5.6" y="5.6" width="8.2" height="8.2" rx="1.2"/><path d="M10.6 5.6v-2a1.2 1.2 0 0 0-1.2-1.2H3.4a1.2 1.2 0 0 0-1.2 1.2v6a1.2 1.2 0 0 0 1.2 1.2h2"/></svg>`,
+  cli: `<svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round"><rect x="1.6" y="2.8" width="12.8" height="10.4" rx="1.4"/><path d="M4.6 6.6 6.6 8.6l-2 2M8.8 10.8h2.8"/></svg>`,
+};
+
+function recentRow(d) {
+  const s = statusLook(d.Status);
+  return `<div class="recent-row">
+    <span class="pill ${s.tone}">${esc(s.label)}</span>
+    <span>${d.CheckOnly ? "Validation" : "Deploy"}</span>
+    <span class="when">${esc(relative(d.CompletedDate || d.StartDate || d.CreatedDate))}</span>
+    <span class="row-tools">
+      <button class="icon-chip" data-deploy-setup="${esc(d.Id)}" title="Open in Setup">${ROW_ICONS.setup}</button>
+      <button class="icon-chip" data-copy="${esc(d.Id)}" title="Copy deploy Id">${ROW_ICONS.copy}</button>
+      <button class="icon-chip" data-copy="${esc(sfCommand(d.Id))}" title="Copy sf command">${ROW_ICONS.cli}</button>
+    </span>
+  </div>`;
 }
 
 function progressBar(label, done, total, errors) {
@@ -956,9 +1077,57 @@ function progressBar(label, done, total, errors) {
   const tone = errors > 0 ? "err" : pct === 100 ? "ok" : "";
   const errText = errors > 0 ? ` · ${errors} error${errors > 1 ? "s" : ""}` : "";
   return `<div class="bar-row">
-    <div class="bar-lab"><span>${label}</span><span>${done ?? 0}/${total}${errText}</span></div>
+    <div class="bar-lab">
+      <span>${label} <b>${pct}%</b></span>
+      <span>${formatNumber(done ?? 0)}/${formatNumber(total)}${errText}</span>
+    </div>
     <div class="bar"><i class="${tone}" style="width:${pct}%"></i></div>
   </div>`;
+}
+
+/**
+ * Remaining time for a running deployment.
+ *
+ * Deployments run components first, then tests, and tests usually dominate the
+ * wall clock - so estimating off a combined total would be meaningless. Whichever
+ * phase is currently moving is the one we project, and while components are still
+ * going we say so rather than implying the whole deploy ends there.
+ */
+function deployEtaLine(d, now) {
+  const testsTotal = Number(d.NumberTestsTotal) || 0;
+  const testsDone = Number(d.NumberTestsCompleted) || 0;
+  const compTotal = Number(d.NumberComponentsTotal) || 0;
+  const compDone = Number(d.NumberComponentsDeployed) || 0;
+  const startedAt = d.StartDate || d.CreatedDate;
+
+  let eta = null;
+  let phase = "";
+  let trailing = "";
+
+  if (testsTotal > 0 && testsDone < testsTotal) {
+    phase = "tests";
+    eta = estimateFinish(deploySamples, {
+      key: `${d.Id}:tests`, done: testsDone, total: testsTotal, startedAt, now,
+    });
+  } else if (compTotal > 0 && compDone < compTotal) {
+    phase = "components";
+    eta = estimateFinish(deploySamples, {
+      key: `${d.Id}:components`, done: compDone, total: compTotal, startedAt, now,
+    });
+    const testsFollow = d.RunTestsEnabled === true ||
+      (d.TestLevel && d.TestLevel !== "NoTestRun");
+    if (testsFollow) trailing = " · tests still to run";
+  }
+
+  if (!eta) return "";
+
+  const basis = eta.measured
+    ? "measured from progress across polls"
+    : "rough average since the deployment started";
+  return `<p class="job-eta" title="${esc(basis)}">` +
+    `~${esc(duration(eta.remainingMs))} left in ${phase} ` +
+    `<span class="soft">· ${esc(eta.finishAt.toLocaleTimeString())}${trailing}` +
+    `${eta.measured ? "" : " (rough)"}</span></p>`;
 }
 
 /** Salesforce collapses single-element arrays into objects; normalise both. */
@@ -986,15 +1155,6 @@ function collectFailures(details) {
   }
 
   return out;
-}
-
-function recentRow(d) {
-  const s = statusLook(d.Status);
-  return `<div class="recent-row">
-    <span class="pill ${s.tone}">${esc(s.label)}</span>
-    <span>${d.CheckOnly ? "Validation" : "Deploy"}</span>
-    <span class="when">${esc(relative(d.CompletedDate || d.StartDate || d.CreatedDate))}</span>
-  </div>`;
 }
 
 function statusLook(status) {
@@ -1087,11 +1247,7 @@ async function onJumpInput() {
 
 function onJumpKey(ev) {
   if (ev.key !== "Enter" || !jumpTarget || !session) return;
-  toHost({
-    type: "navigate",
-    url: `https://${session.lightningHost}/lightning/r/${jumpTarget.name}/${jumpTarget.id}/view`,
-    newTab: ev.ctrlKey || ev.metaKey || ev.shiftKey,
-  });
+  openTab(`https://${session.lightningHost}/lightning/r/${jumpTarget.name}/${jumpTarget.id}/view`);
 }
 
 // ---------------------------------------------------------------------------
@@ -1183,10 +1339,20 @@ async function copyText(text) {
   }
 }
 
+/** Icon-only buttons flash a colour; text buttons swap their label. */
 function flash(button, message) {
+  if (button.querySelector("svg")) {
+    button.classList.add("done");
+    setTimeout(() => button.classList.remove("done"), 1200);
+    return;
+  }
   const original = button.textContent;
   button.textContent = message;
-  setTimeout(() => { button.textContent = original; }, 1200);
+  button.classList.add("done");
+  setTimeout(() => {
+    button.textContent = original;
+    button.classList.remove("done");
+  }, 1200);
 }
 
 function showBanner(html) {
@@ -1246,7 +1412,7 @@ async function checkForUpdate({ force = false } = {}) {
 document.addEventListener("click", async ev => {
   const link = ev.target.closest("[data-href]");
   if (link) {
-    toHost({ type: "navigate", url: link.dataset.href, newTab: true });
+    openTab(link.dataset.href);
     return;
   }
 
@@ -1260,11 +1426,7 @@ document.addEventListener("click", async ev => {
   const deploySetup = ev.target.closest("[data-deploy-setup]");
   if (deploySetup && session) {
     const inner = `/changemgmt/monitorDeploymentsDetails.apexp?asyncId=${deploySetup.dataset.deploySetup}`;
-    toHost({
-      type: "navigate",
-      url: `https://${session.lightningHost}/lightning/setup/DeployStatus/page?address=${encodeURIComponent(inner)}`,
-      newTab: ev.ctrlKey || ev.metaKey || ev.shiftKey,
-    });
+    openTab(`https://${session.lightningHost}/lightning/setup/DeployStatus/page?address=${encodeURIComponent(inner)}`);
     return;
   }
 
@@ -1292,40 +1454,41 @@ document.addEventListener("click", async ev => {
   if (setupTarget) {
     ev.preventDefault();
     if (!session) return;
-    toHost({
-      type: "navigate",
-      url: `https://${session.lightningHost}${setupTarget.dataset.setup}`,
-      newTab: ev.ctrlKey || ev.metaKey || ev.shiftKey,
-    });
+    openTab(`https://${session.lightningHost}${setupTarget.dataset.setup}`);
     return;
   }
 
   if (ev.target.closest("[data-devconsole]") && session) {
-    toHost({
-      type: "openWindow",
-      url: `https://${session.apiHost}/_ui/common/apex/debug/ApexCSIPage`,
-      name: "DeveloperConsole",
-      features: "width=1280,height=800,resizable=yes,scrollbars=yes,toolbar=no,location=no",
-    });
+    openTab(`https://${session.apiHost}/_ui/common/apex/debug/ApexCSIPage`);
     return;
   }
 
   if (ev.target.closest("[data-apexrunner]")) {
-    bg("openApexRunner", { host: pageHost }).catch(err => showBanner(esc(err.message)));
+    bg("openApexRunner", { host: pageHost }).catch(reportBgError);
   }
 });
 
+const openOptions = () => bg("openOptions").catch(reportBgError);
+
 el.refreshDeploy.addEventListener("click", () => refreshDeploys());
 el.refreshJobs.addEventListener("click", () => refreshJobs());
-el.refreshOrg.addEventListener("click", () => refreshOrg());
+el.refreshOrg.addEventListener("click", ev => {
+  // The button lives inside a <summary>; without this the section folds instead.
+  ev.preventDefault();
+  ev.stopPropagation();
+  refreshLimits();
+  refreshOrgMeta();
+});
 el.refreshAll.addEventListener("click", () => {
   el.refreshAll.classList.add("spin");
-  Promise.all([refreshDeploys(), refreshJobs(), refreshOrg(), checkForUpdate({ force: true })])
-    .finally(() => el.refreshAll.classList.remove("spin"));
+  Promise.all([
+    refreshDeploys(), refreshJobs(), refreshLimits(), refreshOrgMeta(),
+    checkForUpdate({ force: true }),
+  ]).finally(() => el.refreshAll.classList.remove("spin"));
 });
 el.close.addEventListener("click", () => toHost({ type: "close" }));
-el.optionsBtn.addEventListener("click", () => chrome.runtime.openOptionsPage());
-el.editShortcuts.addEventListener("click", () => chrome.runtime.openOptionsPage());
+el.optionsBtn.addEventListener("click", openOptions);
+el.editShortcuts.addEventListener("click", openOptions);
 el.jumpInput.addEventListener("input", onJumpInput);
 el.jumpInput.addEventListener("keydown", onJumpKey);
 
@@ -1344,10 +1507,12 @@ window.addEventListener("message", ev => {
   if (!visible) {
     clearTimeout(deployTimer);
     clearTimeout(jobsTimer);
+    clearTimeout(limitsTimer);
     updatePollNote();
   } else if (wasHidden) {
     refreshDeploys();
     refreshJobs();
+    refreshLimits();
   }
 });
 
@@ -1368,7 +1533,7 @@ async function init() {
     el.orgHost.textContent = "not connected";
     el.deploy.innerHTML = "";
     el.limits.innerHTML = "";
-    showBanner(esc(err.message));
+    reportBgError(err);
     return;
   }
 
@@ -1376,7 +1541,7 @@ async function init() {
   el.orgHost.textContent = session.apiHost;
   el.orgHost.title = `${session.apiHost} · org ${session.orgId}`;
 
-  await Promise.all([refreshDeploys(), refreshJobs(), refreshOrg()]);
+  await Promise.all([refreshDeploys(), refreshJobs(), refreshLimits(), refreshOrgMeta()]);
 }
 
 init();

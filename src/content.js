@@ -166,12 +166,10 @@
         setOpen(false);
         break;
       case "navigate":
-        if (msg.newTab) window.open(msg.url, "_blank", "noopener");
-        else location.assign(msg.url);
+        location.assign(msg.url);
         break;
-      case "openWindow":
-        window.open(msg.url, msg.name || "_blank", msg.features || "noopener");
-        break;
+      // New tabs go through the service worker instead: window.open here is not
+      // driven by a user gesture in this document, so popup blockers refuse it.
     }
   });
 

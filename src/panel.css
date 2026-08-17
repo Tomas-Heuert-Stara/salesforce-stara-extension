@@ -153,6 +153,12 @@ body {
   min-height: 20px;
 }
 .sec-tools { display: flex; align-items: center; gap: 4px; }
+
+/* A whole section that folds; the h2 doubles as the summary. */
+.sec-collapse > summary { list-style: none; cursor: pointer; }
+.sec-collapse > summary::-webkit-details-marker { display: none; }
+.sec-collapse > summary > span:first-child::before { content: "▾ "; font-size: 9px; }
+.sec-collapse:not([open]) > summary > span:first-child::before { content: "▸ "; }
 .sec-link { font-size: 10.5px; font-weight: 500; letter-spacing: 0; text-transform: none; color: var(--brand); text-decoration: none; }
 .sec-link:hover { text-decoration: underline; }
 
@@ -205,7 +211,16 @@ body {
 .card-meta b { color: var(--text); font-weight: 600; }
 
 .bar-row { margin-top: 8px; }
-.bar-lab { display: flex; justify-content: space-between; font-size: 11px; color: var(--muted); margin-bottom: 3px; }
+.bar-lab {
+  display: flex;
+  justify-content: space-between;
+  gap: 8px;
+  font-size: 11px;
+  color: var(--muted);
+  margin-bottom: 3px;
+}
+.bar-lab b { color: var(--text); font-weight: 650; font-variant-numeric: tabular-nums; }
+.bar-lab span:last-child { font-variant-numeric: tabular-nums; white-space: nowrap; }
 .bar { height: 5px; border-radius: 999px; background: var(--bg-sunk); overflow: hidden; }
 .bar > i { display: block; height: 100%; background: var(--run); border-radius: 999px; transition: width .3s ease; }
 .bar > i.err { background: var(--err); }
@@ -235,6 +250,25 @@ body {
   cursor: pointer;
 }
 .chip:hover { border-color: var(--brand); color: var(--brand); }
+.chip.done { border-color: var(--ok); color: var(--ok); }
+
+.icon-chip {
+  display: grid;
+  place-items: center;
+  width: 21px;
+  height: 21px;
+  padding: 0;
+  border: 1px solid transparent;
+  border-radius: 5px;
+  background: transparent;
+  color: var(--muted);
+  cursor: pointer;
+  flex: none;
+}
+.icon-chip:hover { border-color: var(--line); color: var(--brand); background: var(--bg); }
+.icon-chip.done { color: var(--ok); border-color: var(--ok); }
+.icon-chip svg { width: 12px; height: 12px; }
+.recent-row .row-tools { display: flex; gap: 1px; flex: none; margin-left: 4px; }
 
 .recent > summary { cursor: pointer; font-size: 11.5px; color: var(--muted); list-style: none; padding: 2px 0; }
 .recent > summary::-webkit-details-marker { display: none; }
@@ -383,11 +417,19 @@ body {
 }
 .lim.warn > i { background: var(--warn); opacity: .3; }
 .lim.bad > i { background: var(--err); opacity: .3; }
+/* Over 100%: full-width hazard stripes, unmistakable against a merely "high" row. */
+.lim.over > i {
+  background: repeating-linear-gradient(
+    -45deg, var(--err) 0 6px, transparent 6px 12px);
+  opacity: .35;
+}
+.lim.over { box-shadow: inset 0 0 0 1px var(--err); }
 .lim-l { position: relative; flex: 1; min-width: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .lim-v { position: relative; font-variant-numeric: tabular-nums; color: var(--muted); flex: none; }
-.lim-p { position: relative; font-variant-numeric: tabular-nums; font-weight: 650; flex: none; width: 34px; text-align: right; }
+.lim-p { position: relative; font-variant-numeric: tabular-nums; font-weight: 650; flex: none; min-width: 40px; text-align: right; }
 .lim.warn .lim-p { color: var(--warn); }
-.lim.bad .lim-p { color: var(--err); }
+.lim.bad .lim-p, .lim.over .lim-p { color: var(--err); }
+.lim.over .lim-p { font-weight: 750; }
 
 .cov { margin-top: 7px; display: flex; align-items: center; gap: 8px; font-size: 11.5px; }
 .cov-n { font-weight: 700; font-variant-numeric: tabular-nums; }

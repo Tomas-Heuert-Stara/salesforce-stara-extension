@@ -54,15 +54,30 @@ Keeping the API calls there also avoids Salesforce's page CSP entirely. The two
 sides talk over `postMessage` (`stara-sfx-panel` / `stara-sfx-host`), since the
 iframe cannot touch `top.location` itself.
 
-**Polling.** Three cycles in [src/panel.js](src/panel.js): deploys (4s while one is
-active, 30s otherwise), jobs (always 30s), and org info — limits, coverage, org
-identity — which has no timer at all because it barely changes. Deploys and jobs
-stop when the panel is closed or the tab is hidden. Keep it that way; a 4s poll
-that never pauses would chew through the org's daily API limit.
+**Polling.** Four cycles in [src/panel.js](src/panel.js): deploys (4s while one is
+active, 30s otherwise), jobs (30s), limits (60s), and org meta — identity and
+coverage — which has no timer because it barely changes. All timed cycles stop when
+the panel is closed or the tab is hidden. Keep it that way; a 4s poll that never
+pauses would chew through the org's daily API limit.
 
-**API budget.** The entire jobs cycle is one `composite/batch` call with nine
-subrequests. Add new counters as subrequests there rather than as new fetches, and
-mind the 25-subrequest ceiling. Anything slow-moving belongs in the org cycle.
+**A section's ⟳ must refresh what that section shows.** Limits originally rode along
+in the jobs batch while the Org limits header called a different function, so its
+refresh button did nothing visible. If you add a section, give it a cycle or wire its
+button to the cycle that actually owns its data.
+
+**API budget.** The jobs cycle is one `composite/batch` call with eight subrequests.
+Add new counters as subrequests there rather than as new fetches, and mind the
+25-subrequest ceiling.
+
+**Opening tabs.** Always `bg("openTab", { url })`, never `window.open` from the
+content script. The panel is an iframe, so a click in it is not a user gesture in the
+host page and popup blockers silently drop the window. Everything in the panel opens
+in a new tab by design — the point of a side panel is not losing your place.
+
+**Re-rendering eats `<details>` state.** Every collapsible built inside a polled
+render must carry `detailsAttr(key, defaultOpen)`; a capture-phase `toggle` listener
+records the state (the event does not bubble). Forgetting it means the section slams
+shut under the user every 30 seconds.
 
 **Other surfaces.** [src/options.html](src/options.html) (shortcut editor, registered
 via `options_ui`) and [src/apex.html](src/apex.html) (Anonymous Apex runner) are

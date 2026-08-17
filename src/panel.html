@@ -14,9 +14,11 @@
     <div class="hd-actions">
       <span class="env" id="envBadge" hidden></span>
       <button class="icon-btn" id="optionsBtn" title="Options">
-        <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5">
-          <circle cx="8" cy="8" r="2.2"/>
-          <path d="M8 1.6v1.7M8 12.7v1.7M14.4 8h-1.7M3.3 8H1.6M12.5 3.5l-1.2 1.2M4.7 11.3l-1.2 1.2M12.5 12.5l-1.2-1.2M4.7 4.7 3.5 3.5"/>
+        <!-- Sliders, not a gear or a sun: unambiguous at 15px. -->
+        <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round">
+          <path d="M2.4 4.6h11.2M2.4 11.4h11.2"/>
+          <circle cx="5.8" cy="4.6" r="1.9" fill="var(--bg-alt)"/>
+          <circle cx="10.4" cy="11.4" r="1.9" fill="var(--bg-alt)"/>
         </svg>
       </button>
       <button class="icon-btn" id="refreshAll" title="Refresh everything">
@@ -83,18 +85,20 @@
 
     <!-- org limits ----------------------------------------------------- -->
     <section class="sec">
-      <h2 class="sec-h">
-        <span>Org limits</span>
-        <span class="sec-tools">
-          <button class="mini-btn" id="refreshOrg" title="Refresh limits and coverage">
-            <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round">
-              <path d="M13.5 8a5.5 5.5 0 1 1-1.7-3.9"/><path d="M13.8 2.6v2.6h-2.6"/>
-            </svg>
-          </button>
-        </span>
-      </h2>
-      <div id="limits"><div class="skeleton" style="height:120px"></div></div>
-      <div id="coverage"></div>
+      <details class="sec-collapse" data-key="org-limits" open>
+        <summary class="sec-h">
+          <span>Org limits</span>
+          <span class="sec-tools">
+            <button class="mini-btn" id="refreshOrg" title="Refresh limits and coverage">
+              <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round">
+                <path d="M13.5 8a5.5 5.5 0 1 1-1.7-3.9"/><path d="M13.8 2.6v2.6h-2.6"/>
+              </svg>
+            </button>
+          </span>
+        </summary>
+        <div id="limits"><div class="skeleton" style="height:120px"></div></div>
+        <div id="coverage"></div>
+      </details>
     </section>
 
     <!-- debug logs ----------------------------------------------------- -->
